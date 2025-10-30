@@ -5,7 +5,6 @@ import math
 
 # =========================================================================
 # 0. DEFINIÇÕES DE PARÂMETROS E BASES ESPECTRAIS
-# (Sem alterações nesta seção)
 # =========================================================================
 
 N = 80                                     # Truncation ordem

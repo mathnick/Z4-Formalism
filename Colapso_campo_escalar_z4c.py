@@ -5,6 +5,7 @@ import math
 
 # =========================================================================
 # 0. DEFINIÇÕES DE PARÂMETROS E BASES ESPECTRAIS
+# (Sem alterações nesta seção)
 # =========================================================================
 
 N = 80                                     # Truncation ordem
@@ -141,6 +142,8 @@ while n <= nf:
 # Theta e Z (Z4)
 theta0 = np.zeros(N+1)
 z0 = np.zeros(N+1)
+
+phi_set = []
 
 # =========================================================================
 # 2. DEFINIÇÕES DAS FUNÇÕES DE EVOLUÇÃO (Refatoração)
@@ -412,3 +415,109 @@ plt.yscale('log')
 plt.grid(True, linestyle='--', alpha=0.7)
 plt.legend(title="Parâmetros Z4", fontsize=10)
 plt.show()
+
+# # =========================================================================
+# # 6. PLOTAGEM DA EVOLUÇÃO DO CAMPO ESCALAR (3D)
+# # =========================================================================
+
+# # NOTA: Esta seção usa o resultado da primeira simulação no loop (A0=0.05)
+# # Requer os dados de 'phi_set' e 'rplot'
+# from mpl_toolkits.mplot3d import Axes3D
+
+# # --- Parâmetros de Plotagem ---
+# M = 3000
+# # Você precisa escolher um índice de frame para plotar. 
+# # Ex: 0 (t=0), int(len(phi_set)/2) (meio), len(phi_set)-1 (final)
+
+# rplot = r
+
+# indice_plot = len(phi_set) - 1
+
+# # Vamos usar um índice que corresponda aproximadamente a t=4 (se houver tempo suficiente)
+# tempo_desejado = 4.0
+# indice_plot = min(int(tempo_desejado / h), len(phi_set) - 1) 
+
+# y = phi_set[indice_plot] 
+# x = rplot
+# theta = np.linspace(0, 2*np.pi, M)    # Revolution of f(phi,r)
+
+# # --- Montagem das Coordenadas 3D ---
+# xn = np.outer(x, np.cos(theta))
+# yn = np.outer(x, np.sin(theta))
+# zn = np.zeros_like(xn)
+
+# for i in range(len(x)):
+#     zn[i,:] = np.full_like(zn[0,:], y[i])
+
+# # --- Criação da Figura ---
+# fig = plt.figure(figsize=(12, 6))
+
+# # Subplot 1: Gráfico 2D (Phi vs r)
+# ax1 = fig.add_subplot(121) 
+# ax1.plot(x, y)
+# ax1.set_title(f"Campo Escalar $\phi(t,r)$ em $t={indice_plot*h:.2f}$")
+# ax1.grid(True)
+# ax1.set_xlabel('r')
+# ax1.set_ylabel(r'$\phi(t,r)$')
+# ax1.set_ylim(-1.5, 1)
+# ax1.set_box_aspect(1)
+
+# # Subplot 2: Gráfico 3D (Revolução)
+# ax2 = fig.add_subplot(122, projection='3d')
+# ax2.plot_surface(xn, yn, zn, rstride = 5, cstride = 5, cmap = 'magma', edgecolor = 'none')
+
+# ax2.set_xlabel('$r$')
+# ax2.set_ylabel('$r$')
+# ax2.set_zlim(-1.5, 1) # Mantém a escala Z consistente
+# ax2.set_title(f"Evolução 3D em $t={indice_plot*h:.2f}$")
+# ax2.grid(False)
+
+# plt.subplots_adjust(wspace=0.1)
+# plt.show()
+
+# # =========================================================================
+# # 7. ANIMAÇÃO 2D (Opcional, mas útil para visualizar a evolução)
+# # =========================================================================
+
+# # NOTA: O código de animação 2D e 3D que você forneceu usa funções
+# # que dependem de módulos como FuncAnimation, que podem ter problemas
+# # de visualização em alguns ambientes (como scripts Python puros sem notebooks).
+# # Por isso, vou fornecer apenas o código da animação 2D, que é mais estável.
+
+# from matplotlib.animation import FuncAnimation
+# # from IPython.display import HTML # Apenas para Jupyter/Google Colab
+
+# fig_anim, ax_anim = plt.subplots(figsize=(8, 6))
+# ax_anim.set_xlim(0, max(rplot))
+# ax_anim.set_ylim(-1.5, 1.5)
+# ax_anim.set_xlabel('r')
+# ax_anim.set_ylabel(r'$\phi(t,r)$')
+# ax_anim.set_title('Evolução do Campo Escalar (Primeira Simulação)')
+
+# line, = ax_anim.plot([], [], lw=2)
+# time_text = ax_anim.text(0.02, 0.9, '', transform=ax_anim.transAxes)
+
+# def init_anim():
+#     line.set_data([], [])
+#     time_text.set_text('')
+#     return line, time_text
+
+# def animate(i):
+#     if i < len(phi_set):
+#         y = phi_set[i]
+#         line.set_data(rplot, y)
+#         time_text.set_text(f"Time = {i*h:.2f}")
+#     return line, time_text
+
+# anim = FuncAnimation(fig_anim, animate, init_func=init_anim,
+#                                frames=len(phi_set), interval=100, blit=True)
+
+# # # Para exibir no Jupyter/Colab:
+# # # HTML(anim.to_html5_video()) 
+
+# # Para salvar o arquivo :
+# print("Salvando animação...")
+# anim.save("animation_scalar_field.mp4", writer='pillow', fps=10)
+# print("Animação salva.")
+
+# plt.show()

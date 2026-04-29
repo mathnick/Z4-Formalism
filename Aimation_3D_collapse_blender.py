@@ -191,11 +191,20 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
         node_tree.links.new(color_ramp.outputs['Color'], principled_bsdf.inputs['Emission Color'])
 
 # =======================================================
-# CRIAÇÃO DO EIXO DE ESCALA Z (NOVA POSIÇÃO E ROTAÇÃO)
+# CRIAÇÃO DO EIXO DE ESCALA Z (NOVA POSIÇÃO, ROTAÇÃO E ESPESSURA)
 # =======================================================
 
 def add_z_axis_scale(z_min, z_max, location_x, location_y):
     """Cria um eixo vertical com marcas de escala."""
+    
+    # --- CONTROLES DE TAMANHO E ESPESSURA (AJUSTE AQUI) ---
+    ESPESSURA_EIXO = 0.1      # Original era 0.05 (Aumente para engrossar a barra principal)
+    COMPRIMENTO_TICK = 0.25   # Original era 0.1 (Aumente para deixar o tracinho mais longo)
+    ESPESSURA_TICK = 0.1      # Original era 0.05 (Engrossa o tracinho)
+    TAMANHO_TEXTO = 0.5       # Aumente para deixar os números maiores
+    AFASTAMENTO_TEXTO = 0.6   # Distância entre o texto e o eixo (aumente se o texto encostar no eixo)
+    # ------------------------------------------------------
+
     axis_mat = bpy.data.materials.new(name="AxisMaterial_LightGray")
     axis_mat.use_nodes = True
     bsdf = axis_mat.node_tree.nodes["Principled BSDF"]
@@ -213,37 +222,43 @@ def add_z_axis_scale(z_min, z_max, location_x, location_y):
     axis_height = z_max - z_min
     if axis_height == 0: axis_height = 0.1 
     
+    # 1. EIXO PRINCIPAL
     bpy.ops.mesh.primitive_cube_add(
         size=1, 
         location=(location_x, location_y, z_min + axis_height / 2)
     )
     main_axis = bpy.context.object
     main_axis.name = "Z_Axis_Scale"
-    main_axis.scale = (0.05, 0.05, axis_height / 2)
+    # Aplica a espessura no eixo X e Y (mantendo a altura Z)
+    main_axis.scale = (ESPESSURA_EIXO, ESPESSURA_EIXO, axis_height / 2)
     main_axis.data.materials.append(axis_mat)
 
     step = axis_height / 4.0
     tick_positions = [z_min + step * i for i in range(5)]
 
     for z_pos in tick_positions:
+        # 2. MARCAS (TICKS)
         bpy.ops.mesh.primitive_cube_add(
             size=1, 
-            location=(location_x - 0.15, location_y, z_pos) 
+            location=(location_x - (COMPRIMENTO_TICK/2 + ESPESSURA_EIXO/2), location_y, z_pos) 
         )
         tick = bpy.context.object
         tick.name = f"Z_Tick_{z_pos:.4f}"
-        tick.scale = (0.1, 0.05, 0.01)
+        # Aplica os controles no tick
+        tick.scale = (COMPRIMENTO_TICK, ESPESSURA_TICK, 0.02)
         tick.data.materials.append(axis_mat)
 
+        # 3. TEXTO DOS NÚMEROS
         bpy.ops.object.text_add(
-            location=(location_x - 0.4, location_y, z_pos) 
+            location=(location_x - AFASTAMENTO_TEXTO, location_y, z_pos - (TAMANHO_TEXTO/3)) 
         )
         text_obj = bpy.context.object
         text_obj.name = f"Z_Label_{z_pos:.4f}"
         text_obj.data.body = f"{z_pos:.4f}"
-        text_obj.data.size = max(0.1, axis_height / 5.0) 
         
-        # ROTAÇÃO ATUALIZADA: Gira -45 graus no eixo Z para olhar para a câmera!
+        # Aplica o tamanho da fonte
+        text_obj.data.size = TAMANHO_TEXTO 
+        
         text_obj.rotation_euler = (radians(90), 0, radians(-45)) 
         text_obj.data.materials.append(label_mat)
 

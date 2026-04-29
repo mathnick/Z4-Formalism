@@ -191,18 +191,22 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
         node_tree.links.new(color_ramp.outputs['Color'], principled_bsdf.inputs['Emission Color'])
 
 # =======================================================
-# CRIAÇÃO DO EIXO DE ESCALA Z (NOVA POSIÇÃO, ROTAÇÃO E ESPESSURA)
+# CRIAÇÃO DO EIXO DE ESCALA Z (COM FOLGA E MENOS MARCAÇÕES)
 # =======================================================
 
 def add_z_axis_scale(z_min, z_max, location_x, location_y):
-    """Cria um eixo vertical com marcas de escala."""
+    """Cria um eixo vertical com marcas de escala e tamanho ajustável."""
     
-    # --- CONTROLES DE TAMANHO E ESPESSURA (AJUSTE AQUI) ---
-    ESPESSURA_EIXO = 0.1      # Original era 0.05 (Aumente para engrossar a barra principal)
-    COMPRIMENTO_TICK = 0.25   # Original era 0.1 (Aumente para deixar o tracinho mais longo)
-    ESPESSURA_TICK = 0.1      # Original era 0.05 (Engrossa o tracinho)
-    TAMANHO_TEXTO = 0.5       # Aumente para deixar os números maiores
-    AFASTAMENTO_TEXTO = 0.6   # Distância entre o texto e o eixo (aumente se o texto encostar no eixo)
+    # --- CONTROLES DE TAMANHO E ESPESSURA ---
+    ESPESSURA_EIXO = 0.1      
+    COMPRIMENTO_TICK = 0.25   
+    ESPESSURA_TICK = 0.1      
+    TAMANHO_TEXTO = 0.5       
+    AFASTAMENTO_TEXTO = 0.6   
+    
+    # --- NOVOS CONTROLES DE ALTURA E MARCAÇÕES ---
+    FOLGA_EIXO = 0.3          # Aumenta o pilar para além dos limites numéricos
+    NUM_MARCACOES = 3         # Quantidade de números no eixo (Ex: 3 = Mínimo, Meio, Máximo)
     # ------------------------------------------------------
 
     axis_mat = bpy.data.materials.new(name="AxisMaterial_LightGray")
@@ -219,46 +223,49 @@ def add_z_axis_scale(z_min, z_max, location_x, location_y):
     
     ensure_object_mode()
     
-    axis_height = z_max - z_min
-    if axis_height == 0: axis_height = 0.1 
+    axis_height_real = z_max - z_min
+    if axis_height_real == 0: axis_height_real = 0.1 
     
-    # 1. EIXO PRINCIPAL
+    # Calcula o tamanho físico do pilar (valores reais + folga nas pontas)
+    z_bottom = z_min - FOLGA_EIXO
+    z_top = z_max + FOLGA_EIXO
+    pilar_height = z_top - z_bottom
+    
+    # 1. EIXO PRINCIPAL (PILAR)
     bpy.ops.mesh.primitive_cube_add(
         size=1, 
-        location=(location_x, location_y, z_min + axis_height / 2)
+        location=(location_x, location_y, z_bottom + pilar_height / 2)
     )
     main_axis = bpy.context.object
     main_axis.name = "Z_Axis_Scale"
-    # Aplica a espessura no eixo X e Y (mantendo a altura Z)
-    main_axis.scale = (ESPESSURA_EIXO, ESPESSURA_EIXO, axis_height / 2)
+    main_axis.scale = (ESPESSURA_EIXO, ESPESSURA_EIXO, pilar_height / 2)
     main_axis.data.materials.append(axis_mat)
 
-    step = axis_height / 4.0
-    tick_positions = [z_min + step * i for i in range(5)]
+    # 2. MARCAS E TEXTOS
+    # Calcula os pontos exatos onde os traços devem ir, baseados nos dados reais
+    if NUM_MARCACOES < 2: NUM_MARCACOES = 2 # Garante no mínimo 2 marcações
+    step = axis_height_real / (NUM_MARCACOES - 1)
+    tick_positions = [z_min + step * i for i in range(NUM_MARCACOES)]
 
     for z_pos in tick_positions:
-        # 2. MARCAS (TICKS)
+        # Tick Mark
         bpy.ops.mesh.primitive_cube_add(
             size=1, 
             location=(location_x - (COMPRIMENTO_TICK/2 + ESPESSURA_EIXO/2), location_y, z_pos) 
         )
         tick = bpy.context.object
         tick.name = f"Z_Tick_{z_pos:.4f}"
-        # Aplica os controles no tick
         tick.scale = (COMPRIMENTO_TICK, ESPESSURA_TICK, 0.02)
         tick.data.materials.append(axis_mat)
 
-        # 3. TEXTO DOS NÚMEROS
+        # Texto
         bpy.ops.object.text_add(
             location=(location_x - AFASTAMENTO_TEXTO, location_y, z_pos - (TAMANHO_TEXTO/3)) 
         )
         text_obj = bpy.context.object
         text_obj.name = f"Z_Label_{z_pos:.4f}"
         text_obj.data.body = f"{z_pos:.4f}"
-        
-        # Aplica o tamanho da fonte
         text_obj.data.size = TAMANHO_TEXTO 
-        
         text_obj.rotation_euler = (radians(90), 0, radians(-45)) 
         text_obj.data.materials.append(label_mat)
 

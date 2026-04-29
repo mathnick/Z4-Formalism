@@ -138,19 +138,17 @@ def create_animated_mesh(r_coords, phi_values):
 
 
 # =======================================================
-# CRIAÇÃO DO MATERIAL (GRADIENTE DE COR) - CORRIGIDO V2 DEFINITIVO
+# CRIAÇÃO DO MATERIAL (GRADIENTE DE COR) - CORRIGIDO V3
 # =======================================================
 
 def setup_gradient_material(obj, z_min_val, z_max_val):
     """Cria e aplica o material com gradiente de cor baseado na altura Z em tempo real."""
     
     mat_name = f"GradientMaterial_{obj.name}"
-    # Se material existe, pegamos para editar. Se não, criamos.
     mat = bpy.data.materials.get(mat_name)
     if mat is None:
         mat = bpy.data.materials.new(name=mat_name)
     
-    # Limpar materiais existentes no objeto e atribuir o nosso
     if obj.data.materials:
         obj.data.materials.clear() 
     obj.data.materials.append(mat)
@@ -158,7 +156,6 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
     mat.use_nodes = True
     node_tree = mat.node_tree
     
-    # Limpar nós existentes
     for node in node_tree.nodes:
         node_tree.nodes.remove(node)
         
@@ -172,7 +169,7 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
     principled_bsdf.inputs["Roughness"].default_value = 0.1 
     node_tree.links.new(principled_bsdf.outputs['BSDF'], material_output.inputs['Surface'])
 
-    # Nó GEOMETRY (Position) - lê a posição deformada em tempo real
+    # Nó GEOMETRY (Position)
     geo_node = node_tree.nodes.new(type='ShaderNodeNewGeometry')
     geo_node.location = -300, 300
     
@@ -180,41 +177,36 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
     separate_xyz.location = -100, 300
     node_tree.links.new(geo_node.outputs['Position'], separate_xyz.inputs['Vector'])
 
-    # Math Node (Map Range) - Converte valores Z para range [0, 1]
-    range_mapper = node_tree.nodes.new(type='ShaderNodeMath')
+    # *** CORREÇÃO AQUI: Usando o nó dedicado ShaderNodeMapRange ***
+    range_mapper = node_tree.nodes.new(type='ShaderNodeMapRange')
     range_mapper.location = 100, 300
-    range_mapper.operation = 'MAP_RANGE' 
-    range_mapper.inputs[1].default_value = z_min_val  # From Min
-    range_mapper.inputs[2].default_value = z_max_val  # From Max
-    range_mapper.inputs[3].default_value = 0.0        # To Min
-    range_mapper.inputs[4].default_value = 1.0        # To Max
+    # Acessando os inputs pelo nome para garantir que não haja erros de índice na sua versão do Blender
+    range_mapper.inputs['From Min'].default_value = z_min_val  
+    range_mapper.inputs['From Max'].default_value = z_max_val  
+    range_mapper.inputs['To Min'].default_value = 0.0        
+    range_mapper.inputs['To Max'].default_value = 1.0        
     node_tree.links.new(separate_xyz.outputs['Z'], range_mapper.inputs['Value'])
 
     # Color Ramp Node (Gradiente de Cor)
     color_ramp = node_tree.nodes.new(type='ShaderNodeValToRGB')
     color_ramp.location = 200, 300
-    
-    # *** CORREÇÃO CRÍTICA (Linha 189): MUDADO DE 'Value' PARA 'Result' ***
     node_tree.links.new(range_mapper.outputs['Result'], color_ramp.inputs['Fac'])
     
     # --- Configuração Robusta das Cores ---
     elements = color_ramp.color_ramp.elements
     
-    # O Blender cria por padrão 2 elementos (index 0 e 1). Vamos ajustá-los.
     elements[0].position = 0.0
     elements[0].color = (0.0, 0.0, 0.4, 1.0) # Azul escuro (Mínimo)
     
     elements[1].position = 1.0
     elements[1].color = (1.0, 0.8, 0.0, 1.0) # Amarelo Dourado (Máximo)
     
-    # Criar um novo elemento no meio
     element_mid = elements.new(0.5) 
     element_mid.color = (0.7, 0.7, 0.7, 1.0) # Cinza Claro (Centro)
 
     node_tree.links.new(color_ramp.outputs['Color'], principled_bsdf.inputs['Base Color'])
 
     print("Material dinâmico com gradiente de cor configurado.")
-
 
 # =======================================================
 # CRIAÇÃO DO EIXO DE ESCALA Z (QUANTIFICAÇÃO) - PURE PYTHON

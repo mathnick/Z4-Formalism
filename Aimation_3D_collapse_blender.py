@@ -143,9 +143,6 @@ def create_animated_mesh(r_coords, phi_values):
     return obj, TOTAL_FRAMES
 
 
-# =======================================================
-# CRIAÇÃO DO MATERIAL (GRADIENTE DE COR) - CORRIGIDO
-# =======================================================
 
 # =======================================================
 # CRIAÇÃO DO MATERIAL (GRADIENTE DE COR) - CORRIGIDO V2

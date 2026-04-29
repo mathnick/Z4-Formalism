@@ -147,6 +147,10 @@ def create_animated_mesh(r_coords, phi_values):
 # CRIAÇÃO DO MATERIAL (GRADIENTE DE COR) - CORRIGIDO
 # =======================================================
 
+# =======================================================
+# CRIAÇÃO DO MATERIAL (GRADIENTE DE COR) - CORRIGIDO V2
+# =======================================================
+
 def setup_gradient_material(obj, z_min_val, z_max_val):
     """Cria e aplica o material com gradiente de cor baseado na altura Z em tempo real."""
     
@@ -177,14 +181,13 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
     principled_bsdf.inputs["Roughness"].default_value = 0.1 
     node_tree.links.new(principled_bsdf.outputs['BSDF'], material_output.inputs['Surface'])
 
-    # *** CORREÇÃO: Usar o nó GEOMETRY (Position) em vez de Texture Coordinate ***
+    # Nó GEOMETRY (Position)
     geo_node = node_tree.nodes.new(type='ShaderNodeNewGeometry')
     geo_node.location = -300, 300
     
     # Separate XYZ Node
     separate_xyz = node_tree.nodes.new(type='ShaderNodeSeparateXYZ')
     separate_xyz.location = -100, 300
-    # Conexão: Geometry (Position) -> Separate.Vector (lê a posição deformada em tempo real)
     node_tree.links.new(geo_node.outputs['Position'], separate_xyz.inputs['Vector'])
 
     # Math Node (Map Range)
@@ -195,7 +198,6 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
     range_mapper.inputs[2].default_value = z_max_val 
     range_mapper.inputs[3].default_value = 0.0      
     range_mapper.inputs[4].default_value = 1.0      
-    # Conexão: Separate.Z -> Math.Value
     node_tree.links.new(separate_xyz.outputs['Z'], range_mapper.inputs['Value'])
 
     # Color Ramp Node (Gradiente de Cor)
@@ -203,18 +205,20 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
     color_ramp.location = 200, 300
     node_tree.links.new(range_mapper.outputs['Value'], color_ramp.inputs['Fac'])
     
-    # Cores
-    color_ramp.color_ramp.elements.remove(color_ramp.color_ramp.elements[1])
-    color_ramp.color_ramp.elements.remove(color_ramp.color_ramp.elements[0])
+    # --- CORREÇÃO: Ajuste das Cores Sem Deletar ---
+    elements = color_ramp.color_ramp.elements
     
-    element_low = color_ramp.color_ramp.elements.new(0.0)
-    element_low.color = (0.0, 0.0, 0.4, 1.0) 
+    # Elemento 0 (Mínimo / Fundo)
+    elements[0].position = 0.0
+    elements[0].color = (0.0, 0.0, 0.4, 1.0) 
     
-    element_mid = color_ramp.color_ramp.elements.new(0.5) 
+    # Elemento 1 (Máximo / Topo)
+    elements[1].position = 1.0
+    elements[1].color = (1.0, 0.8, 0.0, 1.0) 
+    
+    # Criar o Elemento do Meio
+    element_mid = elements.new(0.5) 
     element_mid.color = (0.7, 0.7, 0.7, 1.0) 
-    
-    element_high = color_ramp.color_ramp.elements.new(1.0)
-    element_high.color = (1.0, 0.8, 0.0, 1.0) 
 
     node_tree.links.new(color_ramp.outputs['Color'], principled_bsdf.inputs['Base Color'])
 

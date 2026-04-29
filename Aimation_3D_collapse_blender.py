@@ -209,11 +209,11 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
     print("Material dinâmico com gradiente de cor configurado.")
 
 # =======================================================
-# CRIAÇÃO DO EIXO DE ESCALA Z (QUANTIFICAÇÃO) - PURE PYTHON
+# CRIAÇÃO DO EIXO DE ESCALA Z (QUANTIFICAÇÃO) - CORRIGIDO (BLENDER 4.0+)
 # =======================================================
 
 def add_z_axis_scale(z_min, z_max, location_x, location_y):
-    """Cria um eixo vertical com marcas de escala e etiquetas de texto (Sem NumPy)."""
+    """Cria um eixo vertical com marcas de escala e etiquetas de texto."""
     
     axis_mat = bpy.data.materials.new(name="AxisMaterial_LightGray")
     axis_mat.use_nodes = True
@@ -224,7 +224,13 @@ def add_z_axis_scale(z_min, z_max, location_x, location_y):
     label_mat.use_nodes = True
     bsdf_label = label_mat.node_tree.nodes["Principled BSDF"]
     bsdf_label.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1)
-    bsdf_label.inputs["Emission"].default_value = (1.0, 1.0, 1.0, 1) 
+    
+    # *** CORREÇÃO AQUI: Mudança de "Emission" para "Emission Color" ***
+    if "Emission Color" in bsdf_label.inputs:
+        bsdf_label.inputs["Emission Color"].default_value = (1.0, 1.0, 1.0, 1)
+    elif "Emission" in bsdf_label.inputs: # Fallback para versões mais antigas do Blender
+        bsdf_label.inputs["Emission"].default_value = (1.0, 1.0, 1.0, 1)
+        
     bsdf_label.inputs["Emission Strength"].default_value = 1.0 
     
     ensure_object_mode()

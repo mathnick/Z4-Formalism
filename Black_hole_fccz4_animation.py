@@ -67,6 +67,9 @@ def criar_condicoes_iniciais_fccz4(b, M=1.0):
                      np.dot(chi_0 - 1.0, inv_psi), np.dot(zeros, inv_psi), np.dot(zeros, inv_psi), 
                      np.dot(zeros, inv_psi), np.dot(zeros, inv_psi), np.dot(alpha_0 - 1.0, inv_psi), 
                      np.dot(zeros, inv_psi), np.dot(zeros, inv_psi)])
+    
+
+
 
 # =========================================================================
 # 3. EVOLUÇÃO fCCZ4 (EQUAÇÕES DO ARTIGO)
@@ -145,11 +148,14 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     
     # === A FÍSICA DO SHIFT (Eq. 2.26 e 2.27 do Artigo) ===
     dt_beta = B_shift
+    
     dt_B = 0.75 * dt_Lambda - eta_param * B_shift
 
     return np.array([np.dot(dt_a, inv_psi), np.dot(dt_b, inv_psi), np.dot(dt_chi, inv_psi), np.dot(dt_K, inv_psi), np.dot(dt_Aa, inv_psi), np.dot(dt_Theta, inv_psi), np.dot(dt_Lambda, inv_psi), np.dot(dt_alpha, inv_psi), np.dot(dt_beta, inv_psi), np.dot(dt_B, inv_psi)])
 
 import matplotlib.animation as animation
+
+
 
 # =========================================================================
 # 4. INTEGRADOR E CAPTURA DE FRAMES PARA ANIMAÇÃO
@@ -164,7 +170,7 @@ def passo_rk4(s, h, k1, k2, eta, b):
 def simular_e_filmar(L0, N, tf, h, frames_qtd=100):
     b = configurar_base_unica(L0, N)
     s = criar_condicoes_iniciais_fccz4(b)
-    k1, k2, eta = 2.0, 0.0, 6.5
+    k1, k2, eta = 0.07, 0.0, 2.0
     
     # Listas para guardar os frames (fotos do universo)
     r_grid = b['r']
@@ -172,6 +178,7 @@ def simular_e_filmar(L0, N, tf, h, frames_qtd=100):
     frames_alpha = []
     frames_X = []
     frames_tempo = []
+    #print(f"Raio[0] = {b['r'][0]}, Raio[-1] = {b['r'][-1]}")
     
     passos_totais = int(tf/h)
     passo_por_frame = passos_totais // frames_qtd
@@ -205,7 +212,7 @@ def simular_e_filmar(L0, N, tf, h, frames_qtd=100):
 # 5. GERADOR DO CINEMA (Animação)
 # =========================================================================
 
-tf_filme = 10.0 
+tf_filme = 20.0 
 r, tempos, f_alpha, f_X = simular_e_filmar(L0=5.0, N=150, tf=tf_filme, h=0.00001, frames_qtd=100)
 
 print("\nGerando animação... (isso pode levar alguns segundos)")
@@ -231,8 +238,19 @@ def animar(i):
     titulo.set_text(f'Evolução Wormhole $\\rightarrow$ Trombeta | Tempo = {tempos[i]:.2f}M')
     return linha_alpha, linha_X, titulo
 
+# A MÁGICA DA VELOCIDADE AQUI
 ani = animation.FuncAnimation(fig, animar, frames=len(tempos), interval=100, blit=False)
 
-# Exibe o player na tela
-plt.tight_layout()
+print("\nSalvando a animação no seu computador... (isso pode levar um minutinho)")
+
+# OPÇÃO 1: Salvar como MP4 (Descomente se você tiver o ffmpeg instalado no Windows)
+# ani.save("Evolucao_Wormhole_Trombeta.mp4", writer='ffmpeg', fps=10)
+
+# OPÇÃO 2: Salvar como GIF (Garantido de funcionar nativamente)
+ani.save("Evolucao_Wormhole_Trombeta_2.gif", writer='pillow', fps=10)
+
+print("Vídeo salvo com sucesso na mesma pasta do seu script!")
+
+# Se você quiser apenas salvar e não precisar abrir a janela pop-up, 
+# você pode até comentar o plt.show() abaixo.
 plt.show()

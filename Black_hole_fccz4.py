@@ -230,9 +230,13 @@ def calcular_erros_l2_fisicos(L0, N, tf, h, passos_salvar=1000):
             M_r = dAa_at - (2.0/3.0)*dK_at - 3.0*Aa_at*dchi_chi + (Aa_at - Ab_at)*(2.0/r_grid + db_b)
             H_const = R_fisico - (Aa_at**2 + 2.0*Ab_at**2) + (2.0/3.0)*K_at**2
             
-            # Norma L2
-            l2_H = np.sqrt(np.mean(H_const**2))
-            l2_M = np.sqrt(np.mean(M_r**2))
+            # Cria uma máscara para medir o erro APENAS fora do buraco negro (r > 1.0M)
+            # O horizonte do moving puncture costuma ficar perto de r = 0.5 a 1.0
+            mascara = r_grid > 1.0
+            
+            # Norma L2 apenas no espaço exterior
+            l2_H = np.sqrt(np.mean(H_const[mascara]**2))
+            l2_M = np.sqrt(np.mean(M_r[mascara]**2))
             
             tempos.append(i * h)
             l2_H_list.append(l2_H)

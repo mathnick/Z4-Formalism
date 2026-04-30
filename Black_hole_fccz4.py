@@ -30,7 +30,7 @@ def configurar_base_unica(L0, N):
         T_i = np.cos(i * theta)
         if i == 0:
             dT_i, d2T_i = np.zeros_like(xi_flip), np.zeros_like(xi_flip)
-        else:
+        else:                                        
             sin_t = np.sin(theta)
             dT_i = i * np.sin(i * theta) / sin_t
             d2T_i = -i**2 * np.cos(i * theta) / (sin_t**2) + i * np.sin(i * theta) * xi_flip / (sin_t**3)
@@ -55,7 +55,7 @@ def configurar_base_unica(L0, N):
 
 # =========================================================================
 # 2. CONDIÇÕES INICIAIS (Fator Conforme chi)
-# =========================================================================
+# =========================================================================                                                              
 def criar_condicoes_iniciais_fccz4(b, M=1.0):
     r = b['r']
     psi_bh = 1.0 + M / (2.0 * r)
@@ -67,8 +67,6 @@ def criar_condicoes_iniciais_fccz4(b, M=1.0):
                      np.dot(chi_0 - 1.0, inv_psi), np.dot(zeros, inv_psi), np.dot(zeros, inv_psi), 
                      np.dot(zeros, inv_psi), np.dot(zeros, inv_psi), np.dot(alpha_0 - 1.0, inv_psi), 
                      np.dot(zeros, inv_psi), np.dot(zeros, inv_psi)])
-    
-
 
 
 # =========================================================================
@@ -80,8 +78,7 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     c_K = state[3] * b['filtro']; c_Aa = state[4] * b['filtro']; c_Theta = state[5] * b['filtro']
     c_Lambda = state[6] * b['filtro']; c_alpha = state[7] * b['filtro']; c_beta = state[8] * b['filtro']; c_B = state[9] * b['filtro']
 
-    psi, rpsi, rrpsi, inv_psi, r = b['psi'], b['rpsi'], b['rrpsi'], b['inv_psi'], b['r']
-    
+    psi, rpsi, rrpsi, inv_psi, r = b['psi'], b['rpsi'], b['rrpsi'], b['inv_psi'], b['r']                     
     a = 1.0 + np.dot(c_a, psi); da = np.dot(c_a, rpsi); dda = np.dot(c_a, rrpsi)
     b_met = 1.0 + np.dot(c_b, psi); db = np.dot(c_b, rpsi); ddb = np.dot(c_b, rrpsi)
     alpha = 1.0 + np.dot(c_alpha, psi); dalpha = np.dot(c_alpha, rpsi); ddalpha = np.dot(c_alpha, rrpsi)
@@ -91,7 +88,7 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     K = np.dot(c_K, psi); dK = np.dot(c_K, rpsi); Aa = np.dot(c_Aa, psi); dAa = np.dot(c_Aa, rpsi)
     Theta = np.dot(c_Theta, psi); dTheta = np.dot(c_Theta, rpsi)
     
-    # Regularização Suave (Blindagem matemática analítica)
+    # Regularização Suave
     eps_sq = 1e-24
     chi_reg = np.sqrt(chi**2 + eps_sq)
     a_reg = np.sqrt(a**2 + eps_sq)
@@ -100,8 +97,7 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     
     chi_sq = chi_reg**2
     dchi_chi = dchi / chi_reg
-    ddchi_chi = ddchi / chi_reg
-    
+    ddchi_chi = ddchi / chi_reg                                        
     Ab = - (b_reg / (2.0 * a_reg)) * Aa  
     
     div_beta = dbeta + beta * (db / b_reg + da / (2.0 * a_reg) + 2.0 / r)
@@ -119,8 +115,8 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     
     R_rr = bar_R_rr + ddchi_chi - (da / (2.0 * a_reg)) * dchi_chi + 2.0 * dchi_chi * (1.0 / r + db / (2.0 * b_reg))
     R_tt = bar_R_tt + (r**2 * b_reg / a_reg) * ddchi_chi + (r**2 * b_reg / a_reg) * 2.0 * dchi_chi * (1.0 / r + db / (2.0 * b_reg) - da / (4.0 * a_reg))
-    Ricci = (chi_sq / a_reg) * R_rr + 2.0 * (chi_sq / (r**2 * b_reg)) * R_tt
-
+    Ricci = (chi_sq / a_reg) * R_rr + 2.0 * (chi_sq / (r**2 * b_reg)) * R_tt                        
+    
     D2_alpha = (chi_sq / a_reg) * ddalpha + (chi_sq / a_reg) * dalpha * (2.0 / r + db / b_reg - da / (2.0 * a_reg) + dchi_chi)
     DrDr_alpha = (chi_sq / a_reg) * (ddalpha - dalpha * (da / (2.0 * a_reg) + dchi_chi)) 
     
@@ -132,39 +128,27 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     dt_Aa = beta * dAa - (DrDr_alpha - (1.0 / 3.0) * D2_alpha) + alpha_reg * ((chi_sq / a_reg) * R_rr - (1.0 / 3.0) * Ricci) + alpha_reg * (2.0 * Dr_Zr - (2.0 / 3.0) * Dm_Zm) + alpha_reg * Aa * (K - 2.0 * Theta)
     
     t1 = beta * dLambda - Lambda * dbeta + (1.0 / a_reg) * ddbeta + (2.0 / b_reg) * (dbeta / r - beta / r**2)
-    # CORREÇÃO 1: Usar Lambda (evoluído) em vez de bar_Lambda (analítico)
     t2 = (1.0 / 3.0) * ((1.0 / a_reg) * d_div_beta + 2.0 * Lambda * div_beta)
     t3 = - (2.0 / a_reg) * (Aa * dalpha + alpha_reg * dAa)
-    # CORREÇÃO 2: Usar Lambda (evoluído) em vez de bar_Lambda (analítico)
     t4 = 2.0 * alpha_reg * (Aa * Lambda - (2.0 / (r * b_reg)) * (Aa - Ab))
     t5 = (2.0 * alpha_reg / a_reg) * (dAa - (2.0 / 3.0) * dK - 3.0 * Aa * dchi_chi + (Aa - Ab) * (2.0 / r + db / b_reg))
     t6 = (2.0 / a_reg) * (alpha_reg * dTheta - Theta * dalpha - (2.0 / 3.0) * alpha_reg * K * Zr)
     t7 = (2.0 / a_reg) * ((2.0 / 3.0) * Zr * div_beta - Zr * dbeta) - (2.0 / a_reg) * kappa1 * Zr
-    dt_Lambda = t1 + t2 + t3 + t4 + t5 + t6 + t7
-    
-    # === A FÍSICA DO LAPSO (Eq. 2.25 do Artigo fCCZ4) ===
-    # 1+log não-advectiva acoplada à restrição Theta
+    dt_Lambda = t1 + t2 + t3 + t4 + t5 + t6 + t7                                      
+
+    # === A FÍSICA DO LAPSO ===
     dt_alpha = - 2.0 * alpha * (K - 2.0 * Theta)
     
     # === A FÍSICA DO SHIFT ===
     dt_beta = B_shift
-    
-    # O Freio Nativo Espectral (supondo L0 = 5.0)
-    # Isso equivale a uma linha reta no espaço computacional x. 
-    # Cai de eta_param na origem para 0 no infinito, matando a onda suavemente SEM injetar ruído!
     eta_local = eta_param * (5.0 / (r + 5.0))
-    
     dt_B = 0.75 * dt_Lambda - eta_local * B_shift
-
 
     return np.array([np.dot(dt_a, inv_psi), np.dot(dt_b, inv_psi), np.dot(dt_chi, inv_psi), np.dot(dt_K, inv_psi), np.dot(dt_Aa, inv_psi), np.dot(dt_Theta, inv_psi), np.dot(dt_Lambda, inv_psi), np.dot(dt_alpha, inv_psi), np.dot(dt_beta, inv_psi), np.dot(dt_B, inv_psi)])
 
-import matplotlib.animation as animation
-
-
 
 # =========================================================================
-# 4. INTEGRADOR RK4 E CAPTURA DE ERROS DOS VÍNCULOS (L2)
+# 4. INTEGRADOR RK4 E CAPTURA DOS VÍNCULOS FÍSICOS (H e M^r)
 # =========================================================================
 def passo_rk4(s, h, k1, k2, eta, b):
     k_1 = calcular_taxas_fccz4(s, k1, k2, eta, b)
@@ -173,78 +157,110 @@ def passo_rk4(s, h, k1, k2, eta, b):
     k_4 = calcular_taxas_fccz4(s + h*k_3, k1, k2, eta, b)
     return s + (h/6.0) * (k_1 + 2*k_2 + 2*k_3 + k_4)
 
-def calcular_erros_l2_fccz4(L0, N, tf, h, passos_salvar=1000):
+def calcular_erros_l2_fisicos(L0, N, tf, h, passos_salvar=1000):
     b = configurar_base_unica(L0, N)
     s = criar_condicoes_iniciais_fccz4(b)
-    k1, k2, eta = 0.1, 0.0, 5.0 # eta = 5.0 base (o freio 1/r acontece lá na Seção 3)
+    
+    # Parâmetros Oficiais de Alcubierre
+    k1, k2, eta_param = 2.0, 0.0, 6.5
     
     r_grid = b['r']
     psi_mat = b['psi']
     rpsi_mat = b['rpsi']
+    rrpsi_mat = b['rrpsi'] 
     
     tempos = []
-    l2_theta_list = []
-    l2_Zr_list = []
+    l2_H_list = []
+    l2_M_list = []
     
     passos_totais = int(tf/h)
-    print(f"Monitorando Vínculos (L2) do fCCZ4 com Freio Nativo até t={tf}M...")
+    print(f"Monitorando Vínculos Físicos (H e M^r) com kappa1={k1}, eta={eta_param}...")
     
     for i in range(passos_totais):
-        s = passo_rk4(s, h, k1, k2, eta, b)
+        s = passo_rk4(s, h, k1, k2, eta_param, b)
         
-        # Filtro numérico espectral
         for j in range(10):
-            s[j] *= b['filtro']
+            s[j] *= b['filtro']                      
             
-        # Captura os dados a cada 'passos_salvar' (ex: a cada 0.01M)
         if i % passos_salvar == 0 or i == passos_totais - 1:
             
-            # Reconstrói apenas as variáveis para os vínculos
-            Theta_at = np.dot(s[5], psi_mat)
-            Lambda_at = np.dot(s[6], psi_mat)
+            # Reconstrói variáveis
             a_at = 1.0 + np.dot(s[0], psi_mat)
             b_at = 1.0 + np.dot(s[1], psi_mat)
+            chi_at = 1.0 + np.dot(s[2], psi_mat)
+            K_at = np.dot(s[3], psi_mat)
+            Aa_at = np.dot(s[4], psi_mat)
+            Ab_at = -0.5 * Aa_at 
+            
             da_at = np.dot(s[0], rpsi_mat)
             db_at = np.dot(s[1], rpsi_mat)
+            dchi_at = np.dot(s[2], rpsi_mat)
+            dK_at = np.dot(s[3], rpsi_mat)
+            dAa_at = np.dot(s[4], rpsi_mat)
             
-            # Recalcula o bar_Lambda analítico
-            bar_Lambda_at = (1.0 / a_at) * (da_at / (2.0 * a_at) - db_at / b_at - (2.0 / r_grid) * (1.0 - a_at / b_at))
+            dda_at = np.dot(s[0], rrpsi_mat)
+            ddb_at = np.dot(s[1], rrpsi_mat)
+            ddchi_at = np.dot(s[2], rrpsi_mat)
             
-            # Extrai o vetor de momento Zr
-            Zr_at = (a_at / 2.0) * (Lambda_at - bar_Lambda_at)
+            # Regularização para a captura (igual a evolução)
+            eps_sq = 1e-24
+            a_reg = np.sqrt(a_at**2 + eps_sq)
+            b_reg = np.sqrt(b_at**2 + eps_sq)
+            chi_reg = np.sqrt(chi_at**2 + eps_sq)
             
-            # Calcula a norma L2
-            l2_theta = np.sqrt(np.mean(Theta_at**2))
-            l2_Zr = np.sqrt(np.mean(Zr_at**2))
+            chi_sq = chi_reg**2
+            dchi_chi = dchi_at / chi_reg
+            ddchi_chi = ddchi_at / chi_reg
+            db_b = db_at / b_reg
+            
+            # =============================================================
+            # CÁLCULO EXATO DO RICCI FÍSICO
+            # =============================================================
+            bar_R_rr = - ddb_at / b_reg + (db_at**2) / (2.0 * b_reg**2) + (da_at * db_at) / (2.0 * a_reg * b_reg) + 2.0 * da_at / (r_grid * a_reg)
+            bar_R_tt = - (r_grid**2 * ddb_at) / (2.0 * a_reg) - (3.0 * r_grid * db_at) / (2.0 * a_reg) + (r_grid**2 * da_at * db_at) / (4.0 * a_reg**2) + (r_grid * da_at) / (2.0 * a_reg) + 1.0 - a_reg / b_reg
+            
+            R_rr = bar_R_rr + ddchi_chi - (da_at / (2.0 * a_reg)) * dchi_chi + 2.0 * dchi_chi * (1.0 / r_grid + db_at / (2.0 * b_reg))
+            R_tt = bar_R_tt + (r_grid**2 * b_reg / a_reg) * ddchi_chi + (r_grid**2 * b_reg / a_reg) * 2.0 * dchi_chi * (1.0 / r_grid + db_at / (2.0 * b_reg) - da_at / (4.0 * a_reg))
+            
+            R_fisico = (chi_sq / a_reg) * R_rr + 2.0 * (chi_sq / (r_grid**2 * b_reg)) * R_tt
+            
+            # =============================================================
+            # OS VÍNCULOS FÍSICOS
+            # =============================================================
+            M_r = dAa_at - (2.0/3.0)*dK_at - 3.0*Aa_at*dchi_chi + (Aa_at - Ab_at)*(2.0/r_grid + db_b)
+            H_const = R_fisico - (Aa_at**2 + 2.0*Ab_at**2) + (2.0/3.0)*K_at**2
+            
+            # Norma L2
+            l2_H = np.sqrt(np.mean(H_const**2))
+            l2_M = np.sqrt(np.mean(M_r**2))
             
             tempos.append(i * h)
-            l2_theta_list.append(l2_theta)
-            l2_Zr_list.append(l2_Zr)
+            l2_H_list.append(l2_H)
+            l2_M_list.append(l2_M)
             
             if i % (passos_salvar * 10) == 0:
-                print(f"Tempo: {i*h:.2f}M | L2(Theta): {l2_theta:.2e} | L2(Zr): {l2_Zr:.2e}")
+                print(f"Tempo: {i*h:.2f}M | L2(H): {l2_H:.2e} | L2(M_r): {l2_M:.2e}")
             
         if np.isnan(s).any() or np.max(np.abs(s)) > 1e11:
             print(f"\nCrash numérico em t={i*h:.4f}M.")
             break
             
-    return tempos, l2_theta_list, l2_Zr_list
+    return tempos, l2_H_list, l2_M_list
 
 # =========================================================================
 # 5. GERADOR DO GRÁFICO DE DIAGNÓSTICO (ESCALA LOG)
 # =========================================================================
 tf_erros = 30.0 
-t, erro_Theta, erro_Zr = calcular_erros_l2_fccz4(L0=5.0, N=150, tf=tf_erros, h=0.00001, passos_salvar=1000)
+t, erro_H, erro_M = calcular_erros_l2_fisicos(L0=5.0, N=150, tf=tf_erros, h=0.00001, passos_salvar=1000)
 
-print("\nGerando Gráfico de Vínculos L2...")
+print("\nGerando Gráfico dos Vínculos Físicos...")
 
 plt.figure(figsize=(9, 6))
-plt.plot(t, erro_Theta, 'r-', linewidth=2, label=r'Norma $L2$ de $\Theta$ (Hamiltoniano)')
-plt.plot(t, erro_Zr, 'g-', linewidth=2, label=r'Norma $L2$ de $Z_r$ (Momento)')
+plt.plot(t, erro_H, 'r-', linewidth=2, label=r'Norma $L2$ de $\mathcal{H}$ (Hamiltoniano)')
+plt.plot(t, erro_M, 'g-', linewidth=2, label=r'Norma $L2$ de $\mathcal{M}^r$ (Momento)')
 
-# A escala Log é essencial para ver a estabilização
 plt.yscale('log') 
-plt.title(f"Violação dos Vínculos - fCCZ4 Estabilizado (t={tf_erros}M)", fontsize=14, fontweight='bold')
+plt.title(f"Violação dos Vínculos Físicos - fCCZ4 Estabilizado (t={tf_erros}M)", fontsize=14, fontweight='bold')
 plt.xlabel("Tempo de Evolução (M)", fontsize=12)
 plt.ylabel("Norma L2 (Escala Log)", fontsize=12)
 

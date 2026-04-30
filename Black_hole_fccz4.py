@@ -67,6 +67,9 @@ def criar_condicoes_iniciais_fccz4(b, M=1.0):
                      np.dot(chi_0 - 1.0, inv_psi), np.dot(zeros, inv_psi), np.dot(zeros, inv_psi), 
                      np.dot(zeros, inv_psi), np.dot(zeros, inv_psi), np.dot(alpha_0 - 1.0, inv_psi), 
                      np.dot(zeros, inv_psi), np.dot(zeros, inv_psi)])
+    
+
+
 
 # =========================================================================
 # 3. EVOLUÇÃO fCCZ4 (EQUAÇÕES DO ARTIGO)
@@ -143,85 +146,111 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     # 1+log não-advectiva acoplada à restrição Theta
     dt_alpha = - 2.0 * alpha * (K - 2.0 * Theta)
     
-    # === A FÍSICA DO SHIFT (Eq. 2.26 e 2.27 do Artigo) ===
+    # === A FÍSICA DO SHIFT ===
     dt_beta = B_shift
-    dt_B = 0.75 * dt_Lambda - eta_param * B_shift
+    
+    # O Freio Nativo Espectral (supondo L0 = 5.0)
+    # Isso equivale a uma linha reta no espaço computacional x. 
+    # Cai de eta_param na origem para 0 no infinito, matando a onda suavemente SEM injetar ruído!
+    eta_local = eta_param * (5.0 / (r + 5.0))
+    
+    dt_B = 0.75 * dt_Lambda - eta_local * B_shift
+
 
     return np.array([np.dot(dt_a, inv_psi), np.dot(dt_b, inv_psi), np.dot(dt_chi, inv_psi), np.dot(dt_K, inv_psi), np.dot(dt_Aa, inv_psi), np.dot(dt_Theta, inv_psi), np.dot(dt_Lambda, inv_psi), np.dot(dt_alpha, inv_psi), np.dot(dt_beta, inv_psi), np.dot(dt_B, inv_psi)])
 
+import matplotlib.animation as animation
+
+
+
 # =========================================================================
-# 4. INTEGRADOR RK4 E LOOP PRINCIPAL
+# 4. INTEGRADOR RK4 E CAPTURA DE ERROS DOS VÍNCULOS (L2)
 # =========================================================================
 def passo_rk4(s, h, k1, k2, eta, b):
     k_1 = calcular_taxas_fccz4(s, k1, k2, eta, b)
     k_2 = calcular_taxas_fccz4(s + 0.5*h*k_1, k1, k2, eta, b)
     k_3 = calcular_taxas_fccz4(s + 0.5*h*k_2, k1, k2, eta, b)
     k_4 = calcular_taxas_fccz4(s + h*k_3, k1, k2, eta, b)
-    return s + (h/6.0) * (k_1 + 2*k_2 + 2*k_3 + k_4)      
+    return s + (h/6.0) * (k_1 + 2*k_2 + 2*k_3 + k_4)
 
-def executar_simulacao_com_perfis(L0, N, tf, h):
+def calcular_erros_l2_fccz4(L0, N, tf, h, passos_salvar=1000):
     b = configurar_base_unica(L0, N)
     s = criar_condicoes_iniciais_fccz4(b)
-    k1, k2, eta = 2.0, 0.0, 6.5
+    k1, k2, eta = 0.1, 0.0, 5.0 # eta = 5.0 base (o freio 1/r acontece lá na Seção 3)
     
-    print(f"Rodando fCCZ4 com a física até t={tf}M...")
-    
-    for i in range(int(tf/h)):
-        s = passo_rk4(s, h, k1, k2, eta, b)
-        
-        # Filtro de Faxina no final do passo para limpar acúmulos numéricos
-        for j in range(10):
-            s[j] *= b['filtro']
-        
-        if i % 10000 == 0:
-            al_min = 1.0 + np.dot(s[7], b['psi'])[0]
-            print(f"Tempo: {i*h:.2f}M | Alpha: {al_min:.5f}")
-            
-        if np.isnan(s).any() or np.max(np.abs(s)) > 1e11:
-            print(f"\nCrash t={i*h:.4f}M.")
-            break
-            
-    # --- Fim da simulação: Captura os perfis espaciais finais ---
     r_grid = b['r']
     psi_mat = b['psi']
+    rpsi_mat = b['rpsi']
     
-    # Reconstrói os valores físicos completos
-    alpha_final = 1.0 + np.dot(s[7], psi_mat)
-    chi_final = 1.0 + np.dot(s[2], psi_mat)
-    X_final = chi_final**2 
+    tempos = []
+    l2_theta_list = []
+    l2_Zr_list = []
     
-    return r_grid, alpha_final, X_final 
+    passos_totais = int(tf/h)
+    print(f"Monitorando Vínculos (L2) do fCCZ4 com Freio Nativo até t={tf}M...")
+    
+    for i in range(passos_totais):
+        s = passo_rk4(s, h, k1, k2, eta, b)
+        
+        # Filtro numérico espectral
+        for j in range(10):
+            s[j] *= b['filtro']
+            
+        # Captura os dados a cada 'passos_salvar' (ex: a cada 0.01M)
+        if i % passos_salvar == 0 or i == passos_totais - 1:
+            
+            # Reconstrói apenas as variáveis para os vínculos
+            Theta_at = np.dot(s[5], psi_mat)
+            Lambda_at = np.dot(s[6], psi_mat)
+            a_at = 1.0 + np.dot(s[0], psi_mat)
+            b_at = 1.0 + np.dot(s[1], psi_mat)
+            da_at = np.dot(s[0], rpsi_mat)
+            db_at = np.dot(s[1], rpsi_mat)
+            
+            # Recalcula o bar_Lambda analítico
+            bar_Lambda_at = (1.0 / a_at) * (da_at / (2.0 * a_at) - db_at / b_at - (2.0 / r_grid) * (1.0 - a_at / b_at))
+            
+            # Extrai o vetor de momento Zr
+            Zr_at = (a_at / 2.0) * (Lambda_at - bar_Lambda_at)
+            
+            # Calcula a norma L2
+            l2_theta = np.sqrt(np.mean(Theta_at**2))
+            l2_Zr = np.sqrt(np.mean(Zr_at**2))
+            
+            tempos.append(i * h)
+            l2_theta_list.append(l2_theta)
+            l2_Zr_list.append(l2_Zr)
+            
+            if i % (passos_salvar * 10) == 0:
+                print(f"Tempo: {i*h:.2f}M | L2(Theta): {l2_theta:.2e} | L2(Zr): {l2_Zr:.2e}")
+            
+        if np.isnan(s).any() or np.max(np.abs(s)) > 1e11:
+            print(f"\nCrash numérico em t={i*h:.4f}M.")
+            break
+            
+    return tempos, l2_theta_list, l2_Zr_list
 
 # =========================================================================
-# 5. DISPARO E PLOTAGEM DOS PERFIS FINAIS (A GEOMETRIA CONGELADA)
+# 5. GERADOR DO GRÁFICO DE DIAGNÓSTICO (ESCALA LOG)
 # =========================================================================
-tf_estavel = 10.0
-r, alpha, X = executar_simulacao_com_perfis(L0=5.0, N=150, tf=tf_estavel, h=0.00001)
+tf_erros = 30.0 
+t, erro_Theta, erro_Zr = calcular_erros_l2_fccz4(L0=5.0, N=150, tf=tf_erros, h=0.00001, passos_salvar=1000)
 
-# Geração dos Gráficos de Perfil Espacial
-plt.figure(figsize=(12, 5))
+print("\nGerando Gráfico de Vínculos L2...")
 
-# Plot 1: Perfil do Lapso (Alpha)
-plt.subplot(1, 2, 1)
-plt.plot(r, alpha, 'b-', linewidth=2, label=r'$\alpha(r)$ final')
-plt.title(f"Perfil Espacial do Lapso (t={tf_estavel}M)", fontsize=14)
-plt.xlabel("Raio isotrópico (r/M)", fontsize=12)
-plt.ylabel(r"Fator Lapso ($\alpha$)", fontsize=12)
-plt.grid(True)
-plt.ylim([-0.05, 1.05])
-plt.xlim([0.0, 15.0]) # ZOOM NA FÍSICA REAL
-plt.legend()
+plt.figure(figsize=(9, 6))
+plt.plot(t, erro_Theta, 'r-', linewidth=2, label=r'Norma $L2$ de $\Theta$ (Hamiltoniano)')
+plt.plot(t, erro_Zr, 'g-', linewidth=2, label=r'Norma $L2$ de $Z_r$ (Momento)')
 
-# Plot 2: Perfil do Fator Conforme Real (X)
-plt.subplot(1, 2, 2)
-plt.plot(r, X, 'k-', linewidth=2, label=r'$X(r)$ final')
-plt.title(f"Perfil Espacial do Fator Conforme (t={tf_estavel}M)", fontsize=14)
-plt.xlabel("Raio isotrópico (r/M)", fontsize=12)
-plt.ylabel(r"Fator Conforme ($X = \chi^2$)", fontsize=12)
-plt.grid(True)
-plt.ylim([-0.05, 1.05])
-plt.xlim([0.0, 15.0]) # ZOOM NA FÍSICA REAL
-plt.legend()
+# A escala Log é essencial para ver a estabilização
+plt.yscale('log') 
+plt.title(f"Violação dos Vínculos - fCCZ4 Estabilizado (t={tf_erros}M)", fontsize=14, fontweight='bold')
+plt.xlabel("Tempo de Evolução (M)", fontsize=12)
+plt.ylabel("Norma L2 (Escala Log)", fontsize=12)
+
+plt.grid(True, which="major", ls="-", color='gray', alpha=0.5)
+plt.grid(True, which="minor", ls="--", color='gray', alpha=0.2)
+plt.legend(fontsize=12)
 
 plt.tight_layout()
 plt.show()

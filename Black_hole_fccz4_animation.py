@@ -146,10 +146,16 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     # 1+log não-advectiva acoplada à restrição Theta
     dt_alpha = - 2.0 * alpha * (K - 2.0 * Theta)
     
-    # === A FÍSICA DO SHIFT (Eq. 2.26 e 2.27 do Artigo) ===
+    # === A FÍSICA DO SHIFT ===
     dt_beta = B_shift
     
-    dt_B = 0.75 * dt_Lambda - eta_param * B_shift
+    # O Freio Nativo Espectral (supondo L0 = 5.0)
+    # Isso equivale a uma linha reta no espaço computacional x. 
+    # Cai de eta_param na origem para 0 no infinito, matando a onda suavemente SEM injetar ruído!
+    eta_local = eta_param * (5.0 / (r + 5.0))
+    
+    dt_B = 0.75 * dt_Lambda - eta_local * B_shift
+
 
     return np.array([np.dot(dt_a, inv_psi), np.dot(dt_b, inv_psi), np.dot(dt_chi, inv_psi), np.dot(dt_K, inv_psi), np.dot(dt_Aa, inv_psi), np.dot(dt_Theta, inv_psi), np.dot(dt_Lambda, inv_psi), np.dot(dt_alpha, inv_psi), np.dot(dt_beta, inv_psi), np.dot(dt_B, inv_psi)])
 
@@ -170,7 +176,7 @@ def passo_rk4(s, h, k1, k2, eta, b):
 def simular_e_filmar(L0, N, tf, h, frames_qtd=100):
     b = configurar_base_unica(L0, N)
     s = criar_condicoes_iniciais_fccz4(b)
-    k1, k2, eta = 0.07, 0.0, 2.0
+    k1, k2, eta = 2.0, 0.0, 6.5
     
     # Listas para guardar os frames (fotos do universo)
     r_grid = b['r']

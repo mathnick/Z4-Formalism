@@ -72,7 +72,7 @@ def criar_condicoes_iniciais_fccz4(b, M=1.0):
 
 
 # =========================================================================
-# 3. EVOLUÇÃO fCCZ4 (EQUAÇÕES DO ARTIGO)
+# 3. EVOLUÇÃO fCCZ4 (EQUAÇÕES DO ARTIGO - FÍSICA CORRIGIDA)
 # =========================================================================
 def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     # ATENÇÃO: Criação de cópias (não usar *= para não quebrar a memória do RK4)
@@ -117,12 +117,14 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     bar_R_rr = - ddb / b_reg + (db**2) / (2.0 * b_reg**2) + (da * db) / (2.0 * a_reg * b_reg) + 2.0 * da / (r * a_reg)
     bar_R_tt = - (r**2 * ddb) / (2.0 * a_reg) - (3.0 * r * db) / (2.0 * a_reg) + (r**2 * da * db) / (4.0 * a_reg**2) + (r * da) / (2.0 * a_reg) + 1.0 - a_reg / b_reg
     
-    R_rr = bar_R_rr + ddchi_chi - (da / (2.0 * a_reg)) * dchi_chi + 2.0 * dchi_chi * (1.0 / r + db / (2.0 * b_reg))
-    R_tt = bar_R_tt + (r**2 * b_reg / a_reg) * ddchi_chi + (r**2 * b_reg / a_reg) * 2.0 * dchi_chi * (1.0 / r + db / (2.0 * b_reg) - da / (4.0 * a_reg))
+    # CORREÇÃO 1: Fórmulas exatas do Ricci para a variável W = psi^-2
+    R_rr = bar_R_rr + 2.0 * ddchi_chi + (2.0 / r + db / b_reg - da / a_reg) * dchi_chi - 3.0 * dchi_chi**2
+    R_tt = bar_R_tt + (r**2 * b_reg / a_reg) * (ddchi_chi + (3.0 / r + 1.5 * db / b_reg - 0.5 * da / a_reg) * dchi_chi - 2.0 * dchi_chi**2)
     Ricci = (chi_sq / a_reg) * R_rr + 2.0 * (chi_sq / (r**2 * b_reg)) * R_tt
 
-    D2_alpha = (chi_sq / a_reg) * ddalpha + (chi_sq / a_reg) * dalpha * (2.0 / r + db / b_reg - da / (2.0 * a_reg) + dchi_chi)
-    DrDr_alpha = (chi_sq / a_reg) * (ddalpha - dalpha * (da / (2.0 * a_reg) + dchi_chi)) 
+    # CORREÇÃO 2: Sinal correto nas derivadas do Lapso (- dchi_chi)
+    D2_alpha = (chi_sq / a_reg) * (ddalpha + dalpha * (2.0 / r + db / b_reg - da / (2.0 * a_reg) - dchi_chi))
+    DrDr_alpha = (chi_sq / a_reg) * (ddalpha - dalpha * (da / (2.0 * a_reg) - dchi_chi)) 
     
     dt_a = beta * da + 2.0 * a_reg * dbeta - (2.0 / 3.0) * a_reg * div_beta - 2.0 * alpha_reg * a_reg * Aa
     dt_b = beta * db + 2.0 * b_reg * beta / r - (2.0 / 3.0) * b_reg * div_beta - 2.0 * alpha_reg * b_reg * Ab
@@ -132,39 +134,34 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     dt_Aa = beta * dAa - (DrDr_alpha - (1.0 / 3.0) * D2_alpha) + alpha_reg * ((chi_sq / a_reg) * R_rr - (1.0 / 3.0) * Ricci) + alpha_reg * (2.0 * Dr_Zr - (2.0 / 3.0) * Dm_Zm) + alpha_reg * Aa * (K - 2.0 * Theta)
     
     t1 = beta * dLambda - Lambda * dbeta + (1.0 / a_reg) * ddbeta + (2.0 / b_reg) * (dbeta / r - beta / r**2)
-    # CORREÇÃO 1: Usar Lambda (evoluído) em vez de bar_Lambda (analítico)
+    # CORREÇÃO mantida: Usar Lambda evoluído
     t2 = (1.0 / 3.0) * ((1.0 / a_reg) * d_div_beta + 2.0 * Lambda * div_beta)
     t3 = - (2.0 / a_reg) * (Aa * dalpha + alpha_reg * dAa)
-    # CORREÇÃO 2: Usar Lambda (evoluído) em vez de bar_Lambda (analítico)
     t4 = 2.0 * alpha_reg * (Aa * Lambda - (2.0 / (r * b_reg)) * (Aa - Ab))
     t5 = (2.0 * alpha_reg / a_reg) * (dAa - (2.0 / 3.0) * dK - 3.0 * Aa * dchi_chi + (Aa - Ab) * (2.0 / r + db / b_reg))
     t6 = (2.0 / a_reg) * (alpha_reg * dTheta - Theta * dalpha - (2.0 / 3.0) * alpha_reg * K * Zr)
     t7 = (2.0 / a_reg) * ((2.0 / 3.0) * Zr * div_beta - Zr * dbeta) - (2.0 / a_reg) * kappa1 * Zr
     dt_Lambda = t1 + t2 + t3 + t4 + t5 + t6 + t7
     
-    # === A FÍSICA DO LAPSO (Eq. 2.25 do Artigo fCCZ4) ===
-    # 1+log não-advectiva acoplada à restrição Theta
+    # === A FÍSICA DO LAPSO (Sem advecção extra) ===
     dt_alpha = - 2.0 * alpha * (K - 2.0 * Theta)
     
-    # === A FÍSICA DO SHIFT ===
+    # === A FÍSICA DO SHIFT (Sem advecção extra) ===
     dt_beta = B_shift
     
-    # O Freio Nativo Espectral (supondo L0 = 5.0)
-    # Isso equivale a uma linha reta no espaço computacional x. 
-    # Cai de eta_param na origem para 0 no infinito, matando a onda suavemente SEM injetar ruído!
+    # O Freio Nativo Espectral 
     eta_local = eta_param * (5.0 / (r + 5.0))
-    
     dt_B = 0.75 * dt_Lambda - eta_local * B_shift
-
 
     return np.array([np.dot(dt_a, inv_psi), np.dot(dt_b, inv_psi), np.dot(dt_chi, inv_psi), np.dot(dt_K, inv_psi), np.dot(dt_Aa, inv_psi), np.dot(dt_Theta, inv_psi), np.dot(dt_Lambda, inv_psi), np.dot(dt_alpha, inv_psi), np.dot(dt_beta, inv_psi), np.dot(dt_B, inv_psi)])
 
 import matplotlib.animation as animation
 
 
+import matplotlib.animation as animation
 
 # =========================================================================
-# 4. INTEGRADOR E CAPTURA DE FRAMES PARA ANIMAÇÃO
+# 4. INTEGRADOR RK4 E CAPTURA DE GAUGE (LAPSO E SHIFT)
 # =========================================================================
 def passo_rk4(s, h, k1, k2, eta, b):
     k_1 = calcular_taxas_fccz4(s, k1, k2, eta, b)
@@ -173,90 +170,95 @@ def passo_rk4(s, h, k1, k2, eta, b):
     k_4 = calcular_taxas_fccz4(s + h*k_3, k1, k2, eta, b)
     return s + (h/6.0) * (k_1 + 2*k_2 + 2*k_3 + k_4)
 
-def simular_e_filmar(L0, N, tf, h, frames_qtd=100):
+def simular_e_filmar_gauge(L0, N, tf, h, frames_qtd=300):
     b = configurar_base_unica(L0, N)
     s = criar_condicoes_iniciais_fccz4(b)
-    k1, k2, eta = 2.0, 0.0, 6.5
     
-    # Listas para guardar os frames (fotos do universo)
+    # Parâmetros físicos estabilizados
+    k1, k2, eta_param = 2.0, 0.0, 6.5
+    
     r_grid = b['r']
     psi_mat = b['psi']
-    frames_alpha = []
-    frames_X = []
-    frames_tempo = []
-    #print(f"Raio[0] = {b['r'][0]}, Raio[-1] = {b['r'][-1]}")
+    
+    frames_alpha = []; frames_beta = []; frames_tempo = []
     
     passos_totais = int(tf/h)
-    passo_por_frame = passos_totais // frames_qtd
+    passo_por_frame = max(1, passos_totais // frames_qtd)
     
-    print(f"Rodando e Filmando fCCZ4 (N={N}, dt={h})...")
+    print(f"Rodando fCCZ4 para capturar Lapso e Shift até {tf}M...")
     
     for i in range(passos_totais):
-        s = passo_rk4(s, h, k1, k2, eta, b)
+        s = passo_rk4(s, h, k1, k2, eta_param, b)
         
         for j in range(10):
             s[j] *= b['filtro']
             
-        # Tira uma "foto" a cada X passos
         if i % passo_por_frame == 0 or i == passos_totais - 1:
+            # Reconstruindo Lapso e Shift a partir do estado evoluído
             alpha_atual = 1.0 + np.dot(s[7], psi_mat)
-            chi_atual = 1.0 + np.dot(s[2], psi_mat)
-            X_atual = chi_atual**2
+            beta_atual = np.dot(s[8], psi_mat)
             
             frames_alpha.append(np.copy(alpha_atual))
-            frames_X.append(np.copy(X_atual))
+            frames_beta.append(np.copy(beta_atual))
             frames_tempo.append(i * h)
-            print(f"Gravando frame em t={i*h:.2f}M")
+            
+            if len(frames_tempo) % 50 == 0:
+                print(f"Progresso: {i*h:.2f}M / {tf}M simulados.")
             
         if np.isnan(s).any() or np.max(np.abs(s)) > 1e11:
-            print(f"\nCrash t={i*h:.4f}M.")
+            print(f"\nCrash numérico em t={i*h:.4f}M.")
             break
             
-    return r_grid, frames_tempo, frames_alpha, frames_X
+    return r_grid, frames_tempo, frames_alpha, frames_beta
 
 # =========================================================================
-# 5. GERADOR DO CINEMA (Animação)
+# 5. GERADOR DO FILME (SALVAMENTO SEGURO)
 # =========================================================================
+# Vamos rodar até 50M para ver a onda de Gauge ir embora completamente
+tf_filme = 50.0 
+r, tempos, f_alpha, f_beta = simular_e_filmar_gauge(L0=5.0, N=150, tf=tf_filme, h=0.00001, frames_qtd=300)
 
-tf_filme = 20.0 
-r, tempos, f_alpha, f_X = simular_e_filmar(L0=5.0, N=150, tf=tf_filme, h=0.00001, frames_qtd=100)
-
-print("\nGerando animação... (isso pode levar alguns segundos)")
+print("\nGerando animação... Preparando os gráficos.")
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+limite_raio = 50.0 
 
-# Configuração da Câmera (Limites dos gráficos)
-ax1.set_xlim(0.0, 15.0); ax1.set_ylim(-0.05, 1.05)
+# Gráfico 1: O Lapso (Y até 2.0 para acomodar a onda de Gauge)
+ax1.set_xlim(0.0, limite_raio); ax1.set_ylim(-0.05, 2.05)
 ax1.set_xlabel("Raio isotrópico (r/M)"); ax1.set_ylabel(r"Fator Lapso ($\alpha$)")
 ax1.grid(True)
 
-ax2.set_xlim(0.0, 15.0); ax2.set_ylim(-0.05, 1.05)
-ax2.set_xlabel("Raio isotrópico (r/M)"); ax2.set_ylabel(r"Fator Conforme ($X$)")
+# Gráfico 2: O Shift (Y até 0.6)
+ax2.set_xlim(0.0, limite_raio); ax2.set_ylim(-0.05, 0.6)
+ax2.set_xlabel("Raio isotrópico (r/M)"); ax2.set_ylabel(r"Vetor Shift ($\beta^r$)")
 ax2.grid(True)
 
-linha_alpha, = ax1.plot([], [], 'b-', linewidth=2)
-linha_X, = ax2.plot([], [], 'k-', linewidth=2)
-titulo = fig.suptitle('', fontsize=16)
+linha_alpha, = ax1.plot([], [], 'b-', linewidth=2.5)
+linha_beta, = ax2.plot([], [], 'r-', linewidth=2.5)
+titulo = fig.suptitle('', fontsize=16, fontweight='bold')
 
 def animar(i):
     linha_alpha.set_data(r, f_alpha[i])
-    linha_X.set_data(r, f_X[i])
-    titulo.set_text(f'Evolução Wormhole $\\rightarrow$ Trombeta | Tempo = {tempos[i]:.2f}M')
-    return linha_alpha, linha_X, titulo
+    linha_beta.set_data(r, f_beta[i])
+    titulo.set_text(f'Evolução do Gauge | Tempo = {tempos[i]:.2f}M')
+    return linha_alpha, linha_beta, titulo
 
-# A MÁGICA DA VELOCIDADE AQUI
-ani = animation.FuncAnimation(fig, animar, frames=len(tempos), interval=100, blit=False)
+ani = animation.FuncAnimation(fig, animar, frames=len(tempos), interval=80, blit=False)
 
-print("\nSalvando a animação no seu computador... (isso pode levar um minutinho)")
+# =========================================================================
+# ROTINA DE SALVAMENTO BLINDADA
+# =========================================================================
+print("\nIniciando gravação do arquivo de vídeo. Por favor, aguarde...")
 
-# OPÇÃO 1: Salvar como MP4 (Descomente se você tiver o ffmpeg instalado no Windows)
-# ani.save("Evolucao_Wormhole_Trombeta.mp4", writer='ffmpeg', fps=10)
+# A rota recomendada para Linux é MP4 via ffmpeg. 
+# Se o terminal reclamar que não achou o ffmpeg, basta rodar: sudo apt install ffmpeg
+try:
+    ani.save("Evolucao_Gauge_Trombeta.mp4", writer='ffmpeg', fps=15, dpi=200)
+    print("Sucesso! Vídeo MP4 salvo como 'Evolucao_Gauge_Trombeta.mp4'.")
+except Exception as e:
+    print(f"Erro ao salvar MP4 ({e}). Tentando fallback para GIF animado...")
+    ani.save("Evolucao_Gauge_Trombeta.gif", writer='pillow', fps=15)
+    print("GIF salvo com sucesso!")
 
-# OPÇÃO 2: Salvar como GIF (Garantido de funcionar nativamente)
-ani.save("Evolucao_Wormhole_Trombeta_2.gif", writer='pillow', fps=10)
 
-print("Vídeo salvo com sucesso na mesma pasta do seu script!")
-
-# Se você quiser apenas salvar e não precisar abrir a janela pop-up, 
-# você pode até comentar o plt.show() abaixo.
-plt.show()
+# plt.show()

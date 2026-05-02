@@ -210,7 +210,7 @@ def passo_rk4(s, h, k1, k2, eta, b):
 def simular_parametros_com_sonda(L0, N, tf, h, k1, eta_param):
     b = configurar_bases_fccz4(L0, N)
     s = criar_condicoes_iniciais_fccz4(b)
-    k2 = -0.5
+    k2 = 0.0
     r_grid = b['r']
     
     # Referências para Reconstrução na Sonda
@@ -329,16 +329,30 @@ def simular_parametros_com_sonda(L0, N, tf, h, k1, eta_param):
 # 5. GERENCIADOR DO DIAGNÓSTICO
 # =========================================================================
 tempo_alvo = 20.0
-kappa1_testes = [2.0]
-eta_testes = [6.5]
+kappa1_testes = [2.0, 5.0, 10.0]
+eta_testes = [0.0, 2.0]
 
-print("Iniciando fCCZ4 com Arquitetura de Paridade e Filtro BSSN...\n")
+# Calculando o número total de testes
+total_combinacoes = len(kappa1_testes) * len(eta_testes)
+contador = 1
+
+print("Iniciando fCCZ4 com Arquitetura de Paridade e Filtro BSSN...")
+print(f"Testando {total_combinacoes} combinações possíveis...\n")
+print("=" * 60)
+
 for k1 in kappa1_testes:
     for eta in eta_testes:
+        print(f"\n[{contador}/{total_combinacoes}] Testando: kappa1 = {k1} | eta = {eta}")
+        
         t_inicio = time.time()
-        t_crash, err_H, err_M = simular_parametros_com_sonda(L0=5.0, N=300, tf=tempo_alvo, h=0.00005, k1=k1, eta_param=eta)
+        t_crash, err_H, err_M = simular_parametros_com_sonda(L0=5.0, N=300, tf=tempo_alvo, h=0.0001, k1=k1, eta_param=eta)
         t_fim = time.time()
+        
         duracao_minutos = (t_fim - t_inicio) / 60.0
         status = "SOBREVIVEU!" if t_crash >= tempo_alvo - 0.01 else "CRASH"
-        print(f"\nResultado da Execução: {status} em t = {t_crash:.2f}M (Demorou {duracao_minutos:.1f} min)")
+        
+        print(f"Resultado da Execução: {status} em t = {t_crash:.2f}M (Demorou {duracao_minutos:.1f} min)")
         print(f"Erro L2(H) final: {err_H:.2e} | L2(M_r) final: {err_M:.2e}")
+        print("-" * 60)
+        
+        contador += 1

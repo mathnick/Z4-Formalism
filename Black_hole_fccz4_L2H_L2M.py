@@ -134,6 +134,7 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
 
     
     kappa1_local = kappa1 
+    kappa2 = 0
 
     bar_Lambda = (1.0 / a_reg) * (da / (2.0 * a_reg) - db / b_reg - (2.0 / r) * (1.0 - a_reg / b_reg))
     Zr = (a_reg / 2.0) * (Lambda - bar_Lambda)
@@ -162,7 +163,7 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
 
     dt_a = beta * da + 2.0 * a_reg * dbeta - (2.0 / 3.0) * a_reg * div_beta - 2.0 * alpha_reg * a_reg * Aa
     dt_b = beta * db + 2.0 * b_reg * beta / r - (2.0 / 3.0) * b_reg * div_beta - 2.0 * alpha_reg * b_reg * Ab
-    dt_chi = beta * dchi - (1.0 / 6.0) * chi_reg * div_beta + (1.0 / 6.0) * chi_reg * alpha_reg * K
+    dt_chi = beta * dchi - (1.0 / 3.0) * chi_reg * div_beta + (1.0 / 6.0) * chi_reg * alpha_reg * K
     
     dt_K = - D2_alpha + alpha_reg * (Ricci + 2.0 * Dm_Zm + K**2 - 2.0 * Theta * K) + beta * dK - 3.0 * alpha_reg * kappa1_local * (1.0 + kappa2) * Theta
     dt_Theta = beta * dTheta + 0.5 * alpha_reg * (Ricci + 2.0 * Dm_Zm - (Aa**2 + 2.0 * Ab**2) + (2.0 / 3.0) * K**2 - 2.0 * Theta * K) - Zr_up * dalpha - alpha_reg * kappa1_local * (2.0 + kappa2) * Theta
@@ -200,6 +201,7 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
 # =========================================================================
 # 4. INTEGRADOR RK4, SONDA E FILTRO
 # =========================================================================
+
 def passo_rk4(s, h, k1, k2, eta, b):
     k_1 = calcular_taxas_fccz4(s, k1, k2, eta, b)
     k_2 = calcular_taxas_fccz4(s + 0.5*h*k_1, k1, k2, eta, b)
@@ -207,12 +209,13 @@ def passo_rk4(s, h, k1, k2, eta, b):
     k_4 = calcular_taxas_fccz4(s + h*k_3, k1, k2, eta, b)
     return s + (h/6.0) * (k_1 + 2*k_2 + 2*k_3 + k_4)
 
+
 def simular_parametros_com_sonda(L0, N, tf, h, k1, eta_param):
     b = configurar_bases_fccz4(L0, N)
     s = criar_condicoes_iniciais_fccz4(b)
     k2 = 0.0
+
     r_grid = b['r']
-    
     # Referências para Reconstrução na Sonda
     psi_mat, rpsi_mat, rrpsi_mat = b['psi'], b['rpsi'], b['rrpsi']
     psi2_mat, rpsi2_mat = b['psi2'], b['rpsi2']
@@ -223,105 +226,132 @@ def simular_parametros_com_sonda(L0, N, tf, h, k1, eta_param):
     erro_H_final = 0.0
     erro_M_final = 0.0
 
-    for i in range(passos_totais):
-        s_anterior = np.copy(s)
-        s = passo_rk4(s, h, k1, k2, eta_param, b)
+    # Cria e abre o arquivo txt com o nome dos parâmetros
+    nome_arquivo = f"evolucao_L2_k{k1:.2f}_eta{eta_param:.2f}.txt"
+    
+    with open(nome_arquivo, "w") as arquivo_dados:
+        # Escreve o cabeçalho das colunas no txt
+        arquivo_dados.write("Tempo_M, L2_H, L2_Mr\n")
 
-        # ===========================================================
-        # FILTRO CIRÚRGICO (Estilo BSSN do seu orientador)
-        # Aplicamos o filtro apenas para ancorar a geometria base
-        # ===========================================================
-        s[2] *= b['filtro'] # chi
-        s[3] *= b['filtro'] # K
-        s[7] *= b['filtro'] # alpha
-        
-        # Se quiser testar o filtro total, basta descomentar abaixo:
-        # for j in range(3, 10): s[j] *= b['filtro']
-
-        if i % passos_salvar == 0 or i == passos_totais - 1:
-            a_at = 1.0 + np.dot(s[0], psi_mat)
-            b_at = 1.0 + np.dot(s[1], psi_mat)
-            chi_at = 1.0 + np.dot(s[2], psi_mat)
-            K_at = np.dot(s[3], psi_mat)
-            Aa_at = np.dot(s[4], psi_mat)
-            Ab_at = -0.5 * Aa_at
+        for i in range(passos_totais):
+            s_anterior = np.copy(s)
             
-            da_at = np.dot(s[0], rpsi_mat)
-            db_at = np.dot(s[1], rpsi_mat)
-            dchi_at = np.dot(s[2], rpsi_mat)
-            dK_at = np.dot(s[3], rpsi_mat)
-            dAa_at = np.dot(s[4], rpsi_mat)
-            ddb_at = np.dot(s[1], rrpsi_mat)
-            ddchi_at = np.dot(s[2], rrpsi_mat)
+            # Dá o passo no tempo com RK4
+            s = passo_rk4(s, h, k1, k2, eta_param, b)
 
-            eps_sq = 1e-12
-            a_reg = np.sqrt(a_at**2 + eps_sq)
-            b_reg = np.sqrt(b_at**2 + eps_sq)
-            chi_reg = np.sqrt(chi_at**2 + eps_sq)
-            chi_sq = chi_reg**2
-            dchi_chi = dchi_at / chi_reg
-            ddchi_chi = ddchi_at / chi_reg
-            db_b = db_at / b_reg
+            # ===========================================================
+            # FILTRO CIRÚRGICO EXPANDIDO
+            # ===========================================================
+            s[2] *= b['filtro'] # chi (Fator Conforme)
+            s[3] *= b['filtro'] # K (Traço da Curvatura)
+            s[5] *= b['filtro'] # Theta (Escalar Z4)
+            s[6] *= b['filtro'] # Lambda (Vetor Z4)
+            s[7] *= b['filtro'] # alpha (Lapso)
 
-            r_reg = np.sqrt(r_grid**2 + 1e-8)
-            r_reg_sq = r_reg**2
+            if i % passos_salvar == 0 or i == passos_totais - 1:
+                a_at = 1.0 + np.dot(s[0], psi_mat)
+                b_at = 1.0 + np.dot(s[1], psi_mat)
+                chi_at = 1.0 + np.dot(s[2], psi_mat)
+                K_at = np.dot(s[3], psi_mat)
+                Aa_at = np.dot(s[4], psi_mat)
+                Ab_at = -0.5 * Aa_at
 
-            bar_R_rr = - ddb_at / b_reg + (db_at**2) / (2.0 * b_reg**2) + (da_at * db_at) / (2.0 * a_reg * b_reg) + 2.0 * da_at / (r_reg * a_reg)
-            bar_R_tt = - (r_reg_sq * ddb_at) / (2.0 * a_reg) - (3.0 * r_reg * db_at) / (2.0 * a_reg) + (r_reg_sq * da_at * db_at) / (4.0 * a_reg**2) + (r_reg * da_at) / (2.0 * a_reg) + 1.0 - a_reg / b_reg
-            R_rr = bar_R_rr + 2.0 * ddchi_chi + (2.0 / r_reg + db_at / b_reg - da_at / a_reg) * dchi_chi - 3.0 * dchi_chi**2
-            R_tt = bar_R_tt + (r_reg_sq * b_reg / a_reg) * (ddchi_chi + (3.0 / r_reg + 1.5 * db_at / b_reg - 0.5 * da_at / a_reg) * dchi_chi - 2.0 * dchi_chi**2)
-            R_fisico = (chi_sq / a_reg) * R_rr + 2.0 * (chi_sq / (r_reg_sq * b_reg)) * R_tt
+                da_at = np.dot(s[0], rpsi_mat)
+                db_at = np.dot(s[1], rpsi_mat)
+                dchi_at = np.dot(s[2], rpsi_mat)
+                dK_at = np.dot(s[3], rpsi_mat)
+                dAa_at = np.dot(s[4], rpsi_mat)
+                ddb_at = np.dot(s[1], rrpsi_mat)
+                ddchi_at = np.dot(s[2], rrpsi_mat)
 
-            M_r = dAa_at - (2.0/3.0)*dK_at - 3.0*Aa_at*dchi_chi + (Aa_at - Ab_at)*(2.0/r_reg + db_b)
-            H_const = R_fisico - (Aa_at**2 + 2.0*Ab_at**2) + (2.0/3.0)*K_at**2
+                eps_sq = 1e-12
+                a_reg = np.sqrt(a_at**2 + eps_sq)
+                b_reg = np.sqrt(b_at**2 + eps_sq)
+                chi_reg = np.sqrt(chi_at**2 + eps_sq)
+                chi_sq = chi_reg**2
+                dchi_chi = dchi_at / chi_reg
+                ddchi_chi = ddchi_at / chi_reg
+                db_b = db_at / b_reg
 
-            mascara = r_grid > 1.0
-            erro_H_final = np.sqrt(np.mean(H_const[mascara]**2))
-            erro_M_final = np.sqrt(np.mean(M_r[mascara]**2))
-            tempo_sobrevivido = i * h
+                r_reg = np.sqrt(r_grid**2 + 1e-8)
+                r_reg_sq = r_reg**2
 
-            if i % (passos_salvar * 10) == 0:
-                print(f"Progresso: {tempo_sobrevivido:.2f}M | L2(H): {erro_H_final:.2e} | L2(M_r): {erro_M_final:.2e}")
+                bar_R_rr = - ddb_at / b_reg + (db_at**2) / (2.0 * b_reg**2) + (da_at * db_at) / (2.0 * a_reg * b_reg) + 2.0 * da_at / (r_reg * a_reg)
+                bar_R_tt = - (r_reg_sq * ddb_at) / (2.0 * a_reg) - (3.0 * r_reg * db_at) / (2.0 * a_reg) + (r_reg_sq * da_at * db_at) / (4.0 * a_reg**2) + (r_reg * da_at) / (2.0 * a_reg) + 1.0 - a_reg / b_reg
+                R_rr = bar_R_rr + 2.0 * ddchi_chi + (2.0 / r_reg + db_at / b_reg - da_at / a_reg) * dchi_chi - 3.0 * dchi_chi**2
+                R_tt = bar_R_tt + (r_reg_sq * b_reg / a_reg) * (ddchi_chi + (3.0 / r_reg + 1.5 * db_at / b_reg - 0.5 * da_at / a_reg) * dchi_chi - 2.0 * dchi_chi**2)
+                R_fisico = (chi_sq / a_reg) * R_rr + 2.0 * (chi_sq / (r_reg_sq * b_reg)) * R_tt
 
-        # DETETIVE DE CRASH
-        if np.isnan(s).any() or np.max(np.abs(s)) > 1e11:
-            print(f"\n[ALERTA VERMELHO] Crash detectado em t={i*h:.4f}M!")
-            
-            # Reconstrói estado anterior para autópsia
-            c_a, c_b, c_chi = s_anterior[0], s_anterior[1], s_anterior[2]
-            c_K, c_Aa, c_Theta = s_anterior[3], s_anterior[4], s_anterior[5]
-            c_Lambda, c_alpha = s_anterior[6], s_anterior[7]
-            c_beta, c_B = s_anterior[8], s_anterior[9]
-            
-            a_at = 1.0 + np.dot(c_a, psi_mat)
-            b_at = 1.0 + np.dot(c_b, psi_mat)
-            chi_at = 1.0 + np.dot(c_chi, psi_mat)
-            K_at = np.dot(c_K, psi_mat)
-            Aa_at = np.dot(c_Aa, psi_mat)
-            Theta_at = np.dot(c_Theta, psi_mat)
-            alpha_at = 1.0 + np.dot(c_alpha, psi_mat)
-            B_at = np.dot(c_B, psi_mat)
-            
-            # RECONSTRUÇÃO ÍMPAR NA AUTÓPSIA
-            Lambda_at = np.dot(c_Lambda, psi2_mat)
-            beta_at = np.dot(c_beta, psi2_mat)
-            
-            da_at = np.dot(c_a, rpsi_mat); db_at = np.dot(c_b, rpsi_mat)
-            a_reg = np.sqrt(a_at**2 + 1e-12); b_reg = np.sqrt(b_at**2 + 1e-12)
-            r_reg = np.sqrt(r_grid**2 + 1e-8)
-            
-            bar_Lambda = (1.0 / a_reg) * (da_at / (2.0 * a_reg) - db_at / b_reg - (2.0 / r_reg) * (1.0 - a_reg / b_reg))
-            Zr_at = (a_reg / 2.0) * (Lambda_at - bar_Lambda)
-            idx_max_erro = np.argmax(np.abs(Zr_at) + np.abs(Theta_at))
-            r_critico = r_grid[idx_max_erro]
-            
-            print(f"\n--- RELATÓRIO DE AUTÓPSIA (T={i*h - h:.4f}M) ---")
-            print(f"Ponto crítico inspecionado: r = {r_critico:.4f}M")
-            print(f"1. Métrica: a = {a_at[idx_max_erro]:.4e} | b = {b_at[idx_max_erro]:.4e} | chi = {chi_at[idx_max_erro]:.4e}")
-            print(f"2. Gauge: alpha = {alpha_at[idx_max_erro]:.4e} | beta = {beta_at[idx_max_erro]:.4e} | B = {B_at[idx_max_erro]:.4e}")
-            print(f"3. Curvatura: K = {K_at[idx_max_erro]:.4e} | Aa = {Aa_at[idx_max_erro]:.4e} | Theta = {Theta_at[idx_max_erro]:.4e}")
-            print(f"4. Vínculos: Lambda = {Lambda_at[idx_max_erro]:.4e} | bar_Lambda = {bar_Lambda[idx_max_erro]:.4e} | Zr = {Zr_at[idx_max_erro]:.4e}")
-            break
+                M_r = dAa_at - (2.0/3.0)*dK_at - 3.0*Aa_at*dchi_chi + (Aa_at - Ab_at)*(2.0/r_reg + db_b)
+                H_const = R_fisico - (Aa_at**2 + 2.0*Ab_at**2) + (2.0/3.0)*K_at**2
+
+                # Isola a região externa (r > 1.0) para análise
+                mascara = r_grid > 1.0
+                r_ext = r_grid[mascara]
+                H_ext = H_const[mascara]
+                M_ext = M_r[mascara]
+
+                # Tamanho do domínio de integração
+                delta_R = r_ext[-1] - r_ext[0]
+
+                # Integração L2 real usando a regra do trapézio espacial
+                integral_H2 = np.trapezoid(H_ext**2, x=r_ext)
+                integral_M2 = np.trapezoid(M_ext**2, x=r_ext)
+
+                erro_H_final = np.sqrt(integral_H2 / delta_R)
+                erro_M_final = np.sqrt(integral_M2 / delta_R)
+
+                # Atualiza o tempo perfeitamente para print e txt
+                tempo_sobrevivido = i * h
+
+                if i % (passos_salvar * 10) == 0:
+                    print(f"Progresso: {tempo_sobrevivido:.2f}M | L2(H): {erro_H_final:.2e} | L2(M_r): {erro_M_final:.2e}")
+                    
+                    # Salva os dados de evolução no txt e força a gravação no disco
+                    arquivo_dados.write(f"{tempo_sobrevivido:.4f}, {erro_H_final:.8e}, {erro_M_final:.8e}\n")
+                    arquivo_dados.flush()
+
+            # ===========================================================
+            # DETETIVE DE CRASH E AUTÓPSIA
+            # ===========================================================
+            if np.isnan(s).any() or np.max(np.abs(s)) > 1e11:
+                print(f"\n[ALERTA VERMELHO] Crash detectado em t={i*h:.4f}M!")
+                
+                # Reconstrói estado anterior para autópsia
+                c_a, c_b, c_chi = s_anterior[0], s_anterior[1], s_anterior[2]
+                c_K, c_Aa, c_Theta = s_anterior[3], s_anterior[4], s_anterior[5]
+                c_Lambda, c_alpha = s_anterior[6], s_anterior[7]
+                c_beta, c_B = s_anterior[8], s_anterior[9]
+
+                a_at = 1.0 + np.dot(c_a, psi_mat)
+                b_at = 1.0 + np.dot(c_b, psi_mat)
+                chi_at = 1.0 + np.dot(c_chi, psi_mat)
+                K_at = np.dot(c_K, psi_mat)
+                Aa_at = np.dot(c_Aa, psi_mat)
+                Theta_at = np.dot(c_Theta, psi_mat)
+                alpha_at = 1.0 + np.dot(c_alpha, psi_mat)
+                B_at = np.dot(c_B, psi_mat)
+
+                Lambda_at = np.dot(c_Lambda, psi2_mat)
+                beta_at = np.dot(c_beta, psi2_mat)
+
+                da_at = np.dot(c_a, rpsi_mat); db_at = np.dot(c_b, rpsi_mat)
+                a_reg = np.sqrt(a_at**2 + 1e-12); b_reg = np.sqrt(b_at**2 + 1e-12)
+                r_reg = np.sqrt(r_grid**2 + 1e-8)
+
+                bar_Lambda = (1.0 / a_reg) * (da_at / (2.0 * a_reg) - db_at / b_reg - (2.0 / r_reg) * (1.0 - a_reg / b_reg))
+                Zr_at = (a_reg / 2.0) * (Lambda_at - bar_Lambda)
+
+                idx_max_erro = np.argmax(np.abs(Zr_at) + np.abs(Theta_at))
+                r_critico = r_grid[idx_max_erro]
+
+                print(f"\n--- RELATÓRIO DE AUTÓPSIA (T={i*h - h:.4f}M) ---")
+                print(f"Ponto crítico inspecionado: r = {r_critico:.4f}M")
+                print(f"1. Métrica: a = {a_at[idx_max_erro]:.4e} | b = {b_at[idx_max_erro]:.4e} | chi = {chi_at[idx_max_erro]:.4e}")
+                print(f"2. Gauge: alpha = {alpha_at[idx_max_erro]:.4e} | beta = {beta_at[idx_max_erro]:.4e} | B = {B_at[idx_max_erro]:.4e}")
+                print(f"3. Curvatura: K = {K_at[idx_max_erro]:.4e} | Aa = {Aa_at[idx_max_erro]:.4e} | Theta = {Theta_at[idx_max_erro]:.4e}")
+                print(f"4. Vínculos: Lambda = {Lambda_at[idx_max_erro]:.4e} | bar_Lambda = {bar_Lambda[idx_max_erro]:.4e} | Zr = {Zr_at[idx_max_erro]:.4e}")
+                break
 
     return tempo_sobrevivido, erro_H_final, erro_M_final
 
@@ -329,14 +359,14 @@ def simular_parametros_com_sonda(L0, N, tf, h, k1, eta_param):
 # 5. GERENCIADOR DO DIAGNÓSTICO
 # =========================================================================
 tempo_alvo = 20.0
-kappa1_testes = [2.0, 5.0, 10.0]
-eta_testes = [0.0, 2.0]
+kappa1_testes = [0.05, 0.1, 0.5 , 1.0, 2.0, 5.0]
+eta_testes = [0.0, 0.5, 2.0, 4.0, 8.0]
 
 # Calculando o número total de testes
 total_combinacoes = len(kappa1_testes) * len(eta_testes)
 contador = 1
 
-print("Iniciando fCCZ4 com Arquitetura de Paridade e Filtro BSSN...")
+print("Iniciando fCCZ4 ...")
 print(f"Testando {total_combinacoes} combinações possíveis...\n")
 print("=" * 60)
 

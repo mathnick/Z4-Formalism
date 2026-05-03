@@ -355,34 +355,49 @@ def simular_parametros_com_sonda(L0, N, tf, h, k1, eta_param):
 
     return tempo_sobrevivido, erro_H_final, erro_M_final
 
+import time
+
 # =========================================================================
-# 5. GERENCIADOR DO DIAGNÓSTICO
+# 5. GERENCIADOR DO DIAGNÓSTICO (COM LOG BLINDADO)
 # =========================================================================
-tempo_alvo = 20.0
-kappa1_testes = [0.05, 0.1, 0.5 , 1.0, 2.0, 5.0]
-eta_testes = [0.0, 0.5, 2.0, 4.0, 8.0]
+tempo_alvo = 40.0  # Nossa nova meta para estressar o código!
+kappa1_testes = [0.6, 0.7, 0.8, 0.9] # Focando na intuição de que o ideal está abaixo de 1.0
+eta_testes = [2.5, 3.0]              # O freio necessário para o Shift não ficar negativo
 
 # Calculando o número total de testes
 total_combinacoes = len(kappa1_testes) * len(eta_testes)
 contador = 1
 
 print("Iniciando fCCZ4 ...")
-print(f"Testando {total_combinacoes} combinações possíveis...\n")
+print(f"Testando {total_combinacoes} combinações possíveis para {tempo_alvo}M...\n")
 print("=" * 60)
 
-for k1 in kappa1_testes:
-    for eta in eta_testes:
-        print(f"\n[{contador}/{total_combinacoes}] Testando: kappa1 = {k1} | eta = {eta}")
-        
-        t_inicio = time.time()
-        t_crash, err_H, err_M = simular_parametros_com_sonda(L0=5.0, N=300, tf=tempo_alvo, h=0.0001, k1=k1, eta_param=eta)
-        t_fim = time.time()
-        
-        duracao_minutos = (t_fim - t_inicio) / 60.0
-        status = "SOBREVIVEU!" if t_crash >= tempo_alvo - 0.01 else "CRASH"
-        
-        print(f"Resultado da Execução: {status} em t = {t_crash:.2f}M (Demorou {duracao_minutos:.1f} min)")
-        print(f"Erro L2(H) final: {err_H:.2e} | L2(M_r) final: {err_M:.2e}")
-        print("-" * 60)
-        
-        contador += 1
+# ABRE O ARQUIVO MESTRE DE RESUMO
+with open("Resumo_Varredura_40M.txt", "w") as log_geral:
+    # Cria o cabeçalho da tabela no arquivo
+    log_geral.write("kappa1, eta, status, tempo_final_M, L2_H_final, L2_Mr_final, tempo_minutos\n")
+
+    for k1 in kappa1_testes:
+        for eta in eta_testes:
+            print(f"\n[{contador}/{total_combinacoes}] Testando: kappa1 = {k1} | eta = {eta}")
+            
+            t_inicio = time.time()
+            # Chama a função (certifique-se que ela está configurada para retornar esses 3 valores)
+            t_crash, err_H, err_M = simular_parametros_com_sonda(L0=5.0, N=300, tf=tempo_alvo, h=0.0001, k1=k1, eta_param=eta)
+            t_fim = time.time()
+            
+            duracao_minutos = (t_fim - t_inicio) / 60.0
+            status = "SOBREVIVEU!" if t_crash >= tempo_alvo - 0.01 else "CRASH"
+            
+            # 1. Imprime no Terminal
+            print(f"Resultado da Execução: {status} em t = {t_crash:.2f}M (Demorou {duracao_minutos:.1f} min)")
+            print(f"Erro L2(H) final: {err_H:.2e} | L2(M_r) final: {err_M:.2e}")
+            print("-" * 60)
+            
+            # 2. SALVA NO ARQUIVO MESTRE E FORÇA A GRAVAÇÃO (O NOSSO SALVA-VIDAS!)
+            log_geral.write(f"{k1}, {eta}, {status}, {t_crash:.4f}, {err_H:.8e}, {err_M:.8e}, {duracao_minutos:.2f}\n")
+            log_geral.flush() 
+            
+            contador += 1
+
+print("\nVarredura concluída! O arquivo 'Resumo_Varredura_40M.txt' foi salvo com sucesso.")

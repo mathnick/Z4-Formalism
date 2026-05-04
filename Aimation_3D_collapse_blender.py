@@ -1,7 +1,7 @@
 import bpy
 import numpy as np
 import os
-from math import pi, radians
+from math import pi
 
 # =======================================================
 # 1. CONFIGURAÇÕES E PARÂMETROS GLOBAIS
@@ -10,10 +10,6 @@ from math import pi, radians
 DATA_FILE_NAME = "scalar_field_Z4c_data_3.npy" 
 OBJECT_NAME = "ScalarField_Z4c"
 THETA_SEGMENTS = 64  
-
-# Posicionamento do Eixo ajustado para a frente da câmera
-AXIS_LOC_X = -10.0  
-AXIS_LOC_Y = 3.0   
 
 # =======================================================
 # FUNÇÕES DE UTILIDADE E PREPARAÇÃO
@@ -34,8 +30,9 @@ def get_data():
         raise RuntimeError(f"Falha ao processar arquivo: {e}")
 
 def clean_scene_v2():
-    """Remove objetos e materiais da simulação anterior."""
+    """Remove objetos e materiais da simulação anterior (incluindo eixos antigos)."""
     ensure_object_mode()
+    # Mantive as tags do eixo na lista de deleção apenas para limpar o que ficou na sua cena
     prefixes_to_delete = ["ScalarField_Z4c", "GradientMaterial_", "AxisMaterial_", "Z_Axis_Scale", "Z_Tick_", "Z_Label_"]
     
     for prefix in prefixes_to_delete:
@@ -121,11 +118,11 @@ def create_animated_mesh(r_coords, phi_values):
     return obj, TOTAL_FRAMES
 
 # =======================================================
-# CRIAÇÃO DO MATERIAL (FORÇA MÁXIMA DE COR)
+# CRIAÇÃO DO MATERIAL (CORES VIBRANTES + ALTO CONTRASTE)
 # =======================================================
 
 def setup_gradient_material(obj, z_min_val, z_max_val):
-    """Aplica material com emissão forte (auto-iluminado) para as cores pularem na tela."""
+    """Aplica material com emissão forte e cores vibrantes."""
     mat_name = f"GradientMaterial_{obj.name}"
     mat = bpy.data.materials.get(mat_name)
     if mat is None:
@@ -141,14 +138,12 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
         node_tree.nodes.remove(node)
         
     material_output = node_tree.nodes.new(type='ShaderNodeOutputMaterial')
-    material_output.location = 600, 0
+    material_output.location = 800, 0
 
     principled_bsdf = node_tree.nodes.new(type='ShaderNodeBsdfPrincipled')
-    principled_bsdf.location = 300, 0
-    
-    # BRILHO MÁXIMO PARA RESOLVER A COR FRACA
+    principled_bsdf.location = 500, 0
     principled_bsdf.inputs["Roughness"].default_value = 0.5 
-    principled_bsdf.inputs["Emission Strength"].default_value = 5.0 # Força Extrema
+    principled_bsdf.inputs["Emission Strength"].default_value = 3.0 # Brilho ajustado para o Bloom
     
     node_tree.links.new(principled_bsdf.outputs['BSDF'], material_output.inputs['Surface'])
 
@@ -163,111 +158,62 @@ def setup_gradient_material(obj, z_min_val, z_max_val):
     range_mapper.location = 100, 300
     range_mapper.inputs['From Min'].default_value = z_min_val  
     range_mapper.inputs['From Max'].default_value = z_max_val  
-    range_mapper.inputs['To Min'].default_value = 0.0        
-    range_mapper.inputs['To Max'].default_value = 1.0        
     node_tree.links.new(separate_xyz.outputs['Z'], range_mapper.inputs['Value'])
 
     color_ramp = node_tree.nodes.new(type='ShaderNodeValToRGB')
-    color_ramp.location = 200, 300
+    color_ramp.location = 300, 300
     node_tree.links.new(range_mapper.outputs['Result'], color_ramp.inputs['Fac'])
     
-    # Paleta de Cores Científica (Azul escuro -> Ciano -> Amarelo -> Vermelho)
+    # PALETA DE CORES VIBRANTE
     elements = color_ramp.color_ramp.elements
     elements[0].position = 0.0
-    elements[0].color = (0.0, 0.0, 0.8, 1.0) # Azul
+    elements[0].color = (0.0, 0.0, 0.4, 1.0) # Azul Escuro (Mínimo)
     
     elements[1].position = 1.0
-    elements[1].color = (0.8, 0.0, 0.0, 1.0) # Vermelho
+    elements[1].color = (2.0, 1.0, 0.0, 1.0) # Amarelo Intenso (Pico)
     
     element_mid = elements.new(0.5) 
-    element_mid.color = (0.0, 0.8, 0.8, 1.0) # Ciano
-    
-    element_high = elements.new(0.8) 
-    element_high.color = (1.0, 0.8, 0.0, 1.0) # Amarelo
+    element_mid.color = (1.0, 0.0, 0.0, 1.0) # Vermelho Puro (Meio)
 
-    # Conectar ao Base Color e à Emissão
-    node_tree.links.new(color_ramp.outputs['Color'], principled_bsdf.inputs['Base Color'])
+    # NÓ DE BRILHO E CONTRASTE
+    bright_con = node_tree.nodes.new(type='ShaderNodeBrightContrast')
+    bright_con.location = 500, 300
+    bright_con.inputs['Contrast'].default_value = 1.5 
+    
+    node_tree.links.new(color_ramp.outputs['Color'], bright_con.inputs['Color'])
+    node_tree.links.new(bright_con.outputs['Color'], principled_bsdf.inputs['Base Color'])
+    
     if "Emission Color" in principled_bsdf.inputs:
-        node_tree.links.new(color_ramp.outputs['Color'], principled_bsdf.inputs['Emission Color'])
+        node_tree.links.new(bright_con.outputs['Color'], principled_bsdf.inputs['Emission Color'])
 
 # =======================================================
-# CRIAÇÃO DO EIXO DE ESCALA Z (COM FOLGA E MENOS MARCAÇÕES)
+# CONFIGURAÇÃO DE ESTÚDIO (BLOOM, FUNDO ESCURO E WIREFRAME)
 # =======================================================
 
-def add_z_axis_scale(z_min, z_max, location_x, location_y):
-    """Cria um eixo vertical com marcas de escala e tamanho ajustável."""
+def setup_visual_studio(obj_scalar_field):
+    """Aplica as configurações globais de renderização e modificadores para contraste."""
+    # 1. Ativar o Efeito Bloom
+    bpy.context.scene.eevee.use_bloom = True
+    bpy.context.scene.eevee.bloom_intensity = 0.05 
+    bpy.context.scene.eevee.bloom_radius = 4.0
     
-    # --- CONTROLES DE TAMANHO E ESPESSURA ---
-    ESPESSURA_EIXO = 0.1      
-    COMPRIMENTO_TICK = 0.25   
-    ESPESSURA_TICK = 0.1      
-    TAMANHO_TEXTO = 0.5       
-    AFASTAMENTO_TEXTO = 0.6   
-    
-    # --- NOVOS CONTROLES DE ALTURA E MARCAÇÕES ---
-    FOLGA_EIXO = 0.3          # Aumenta o pilar para além dos limites numéricos
-    NUM_MARCACOES = 3         # Quantidade de números no eixo (Ex: 3 = Mínimo, Meio, Máximo)
-    # ------------------------------------------------------
+    # 2. Escurecer o Fundo do Mundo
+    world = bpy.context.scene.world
+    if world is not None and world.use_nodes:
+        bg_node = world.node_tree.nodes.get("Background")
+        if bg_node:
+            bg_node.inputs[0].default_value = (0.02, 0.02, 0.02, 1.0) 
+            bg_node.inputs[1].default_value = 1.0 
 
-    axis_mat = bpy.data.materials.new(name="AxisMaterial_LightGray")
-    axis_mat.use_nodes = True
-    bsdf = axis_mat.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = (0.3, 0.3, 0.3, 1)
-
-    label_mat = bpy.data.materials.new(name="AxisLabelMaterial_WhiteEmissive")
-    label_mat.use_nodes = True
-    bsdf_label = label_mat.node_tree.nodes["Principled BSDF"]
-    bsdf_label.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1)
-    bsdf_label.inputs["Emission Color"].default_value = (1.0, 1.0, 1.0, 1)
-    bsdf_label.inputs["Emission Strength"].default_value = 2.0 
+    # 3. Adicionar Modificador Wireframe
+    if "Visual_Wireframe" in obj_scalar_field.modifiers:
+        obj_scalar_field.modifiers.remove(obj_scalar_field.modifiers["Visual_Wireframe"])
+        
+    wire_mod = obj_scalar_field.modifiers.new(name="Visual_Wireframe", type='WIREFRAME')
+    wire_mod.thickness = 0.015       
+    wire_mod.use_replace = False     
     
-    ensure_object_mode()
-    
-    axis_height_real = z_max - z_min
-    if axis_height_real == 0: axis_height_real = 0.1 
-    
-    # Calcula o tamanho físico do pilar (valores reais + folga nas pontas)
-    z_bottom = z_min - FOLGA_EIXO
-    z_top = z_max + FOLGA_EIXO
-    pilar_height = z_top - z_bottom
-    
-    # 1. EIXO PRINCIPAL (PILAR)
-    bpy.ops.mesh.primitive_cube_add(
-        size=1, 
-        location=(location_x, location_y, z_bottom + pilar_height / 2)
-    )
-    main_axis = bpy.context.object
-    main_axis.name = "Z_Axis_Scale"
-    main_axis.scale = (ESPESSURA_EIXO, ESPESSURA_EIXO, pilar_height / 2)
-    main_axis.data.materials.append(axis_mat)
-
-    # 2. MARCAS E TEXTOS
-    # Calcula os pontos exatos onde os traços devem ir, baseados nos dados reais
-    if NUM_MARCACOES < 2: NUM_MARCACOES = 2 # Garante no mínimo 2 marcações
-    step = axis_height_real / (NUM_MARCACOES - 1)
-    tick_positions = [z_min + step * i for i in range(NUM_MARCACOES)]
-
-    for z_pos in tick_positions:
-        # Tick Mark
-        bpy.ops.mesh.primitive_cube_add(
-            size=1, 
-            location=(location_x - (COMPRIMENTO_TICK/2 + ESPESSURA_EIXO/2), location_y, z_pos) 
-        )
-        tick = bpy.context.object
-        tick.name = f"Z_Tick_{z_pos:.4f}"
-        tick.scale = (COMPRIMENTO_TICK, ESPESSURA_TICK, 0.02)
-        tick.data.materials.append(axis_mat)
-
-        # Texto
-        bpy.ops.object.text_add(
-            location=(location_x - AFASTAMENTO_TEXTO, location_y, z_pos - (TAMANHO_TEXTO/3)) 
-        )
-        text_obj = bpy.context.object
-        text_obj.name = f"Z_Label_{z_pos:.4f}"
-        text_obj.data.body = f"{z_pos:.4f}"
-        text_obj.data.size = TAMANHO_TEXTO 
-        text_obj.rotation_euler = (radians(90), 0, radians(-45)) 
-        text_obj.data.materials.append(label_mat)
+    print("Estúdio configurado: Fundo Escuro, Bloom e Wireframe.")
 
 # =======================================================
 # EXECUÇÃO PRINCIPAL
@@ -279,20 +225,22 @@ def main():
         
         r_coords, phi_values = get_data()
         
-        # Leitura Dinâmica Real
         dynamic_min = float(np.min(phi_values))
         dynamic_max = float(np.max(phi_values))
         
         obj_scalar_field, TOTAL_FRAMES = create_animated_mesh(r_coords, phi_values)
+        
+        # Aplicar material dinâmico
         setup_gradient_material(obj_scalar_field, dynamic_min, dynamic_max)
-        add_z_axis_scale(dynamic_min, dynamic_max, AXIS_LOC_X, AXIS_LOC_Y)
+        
+        # Aplicar visual de estúdio (Bloom, Fundo, Wireframe)
+        setup_visual_studio(obj_scalar_field)
 
         scene = bpy.context.scene
         scene.frame_start = 0
         scene.frame_end = TOTAL_FRAMES - 1
         scene.render.fps = 30
         
-        # Força o ambiente 3D a usar Material Preview automaticamente
         for area in bpy.context.screen.areas:
             if area.type == 'VIEW_3D':
                 for space in area.spaces:

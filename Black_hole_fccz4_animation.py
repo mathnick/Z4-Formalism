@@ -3,12 +3,11 @@ import time
 import math
 
 # =========================================================================
-# 1. ARQUITETURA DE DOMÍNIO E BASES DE PARIDADE 
+# 1. ARQUITETURA DE DOMÍNIO E BASES DE PARIDADE
 # =========================================================================
-def configurar_bases_fccz4(L0, N):
-    # A sacada de mestre: ignoramos o índice 0 para nunca tocar no r=0 exato
+def configurar_bases_fccz4(L0, N, n1_param=5.0): 
     col = np.cos(np.arange(2*N + 4) * math.pi / (2*N + 3))
-    colr = col[1:N+2] 
+    colr = col[1:N+2]
     r1 = L0 * colr / (np.sqrt(1 - colr**2))
     r = np.flip(r1)
 
@@ -29,8 +28,7 @@ def configurar_bases_fccz4(L0, N):
         rrSB[i, :] = -np.sin((2*i + 1) * np.arctan(L0/r)) * (2*i + 1)**2 * L0**2 / (r**4 * (1 + L0**2 / r**2)**2) \
                      + 2 * np.cos((2*i + 1) * np.arctan(L0/r)) * (2*i + 1) * L0 / (r**3 * (1 + L0**2 / r**2)) \
                      - 2 * np.cos((2*i + 1) * np.arctan(L0/r)) * (2*i + 1) * L0**3 / (r**5 * (1 + L0**2 / r**2)**2)
-
-        # BASE ÍMPAR: 
+        # BASE ÍMPAR:
         SB2[i, :] = np.sin((2*i + 2) * np.arctan(L0/r))
         rSB2[i, :] = -np.cos((2*i + 2) * np.arctan(L0/r)) * (2*i + 2) * L0 / (r**2 * (1 + L0**2 / r**2))
         rrSB2[i, :] = -np.sin((2*i + 2) * np.arctan(L0/r)) * (2*i + 2)**2 * L0**2 / (r**4 * (1 + L0**2 / r**2)**2) \
@@ -41,10 +39,10 @@ def configurar_bases_fccz4(L0, N):
     inv_psi = np.linalg.pinv(SB)
     inv_psi2 = np.linalg.pinv(SB2)
 
-    # FIltro
+    # Filtro Erfc
     erfc_vec = np.vectorize(math.erfc)
     eta1 = np.arange(1, N + 2) / (N + 1)
-    n1 = 10.0
+    n1 = n1_param  # <--- UTILIZANDO O PARÂMETRO DA FUNÇÃO
     u = eta1 - 0.5
     u_sq = u**2
     arg = np.clip(1.0 - 4.0 * u_sq, 1e-14, 1.0)
@@ -83,7 +81,7 @@ def criar_condicoes_iniciais_fccz4(b, M=1.0):
         np.dot(zeros, inv_psi2),         # c_Lambda (ÍMPAR) <--- NOVO
         np.dot(alpha_0 - 1.0, inv_psi),  # c_alpha (Par)
         np.dot(zeros, inv_psi2),         # c_beta (ÍMPAR) <--- NOVO
-        np.dot(zeros, inv_psi)           # c_B (Par)
+        np.dot(zeros, inv_psi2)           # c_B (Par)
     ])
 
 # =========================================================================
@@ -96,7 +94,7 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     c_Lambda = state[6] # ÍMPAR
     c_alpha = state[7]
     c_beta = state[8]   # ÍMPAR
-    c_B = state[9]
+    c_B = state[9]      # ÍMPAR (Estava Par!)
 
     # Matrizes
     psi, rpsi, rrpsi, inv_psi = b['psi'], b['rpsi'], b['rrpsi'], b['inv_psi']
@@ -108,7 +106,6 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     b_met = 1.0 + np.dot(c_b, psi); db = np.dot(c_b, rpsi); ddb = np.dot(c_b, rrpsi)
     alpha = 1.0 + np.dot(c_alpha, psi); dalpha = np.dot(c_alpha, rpsi); ddalpha = np.dot(c_alpha, rrpsi)
     chi = 1.0 + np.dot(c_chi, psi); dchi = np.dot(c_chi, rpsi); ddchi = np.dot(c_chi, rrpsi)
-    B_shift = np.dot(c_B, psi)
     K = np.dot(c_K, psi); dK = np.dot(c_K, rpsi)
     Aa = np.dot(c_Aa, psi); dAa = np.dot(c_Aa, rpsi)
     Theta = np.dot(c_Theta, psi); dTheta = np.dot(c_Theta, rpsi)
@@ -116,6 +113,7 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     # RECONSTRUÇÃO VARIÁVEIS ÍMPARES
     beta = np.dot(c_beta, psi2); dbeta = np.dot(c_beta, rpsi2); ddbeta = np.dot(c_beta, rrpsi2)
     Lambda = np.dot(c_Lambda, psi2); dLambda = np.dot(c_Lambda, rpsi2)
+    B_shift = np.dot(c_B, psi2); dB_shift = np.dot(c_B, rpsi2) # AGORA ESTÁ NA BASE ÍMPAR CORRETA
 
     # Regularização Suave Original
     eps_sq = 1e-24
@@ -128,7 +126,7 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     ddchi_chi = ddchi / chi_reg
     Ab = - (b_reg / (2.0 * a_reg)) * Aa
 
-    # O termo beta/r agora é matematicamente limpo porque beta é nulo na origem!
+    
     div_beta = dbeta + beta * (db / b_reg + da / (2.0 * a_reg) + 2.0 / r)
     d_div_beta = ddbeta + dbeta * (db / b_reg + da / (2.0 * a_reg) + 2.0 / r) + beta * ((ddb * b_reg - db**2) / (b_reg**2) + (dda * a_reg - da**2) / (2.0 * a_reg**2) - 2.0 / (r**2))
 
@@ -172,17 +170,21 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     t1 = beta * dLambda - Lambda * dbeta + (1.0 / a_reg) * ddbeta + (2.0 / b_reg) * (dbeta / r - beta / (r**2))
     t2 = (1.0 / 3.0) * ((1.0 / a_reg) * d_div_beta + 2.0 * Lambda * div_beta)
     t3 = - (2.0 / a_reg) * (Aa * dalpha + alpha_reg * dAa)
-    t4 = 2.0 * alpha_reg * (Aa * Lambda - (2.0 / (r * b_reg)) * (Aa - Ab))
+    t4 = 2.0 * alpha_reg * (Aa *Lambda - (2.0 / (r * b_reg)) * (Aa - Ab))
     t5 = (2.0 * alpha_reg / a_reg) * (dAa - (2.0 / 3.0) * dK - 3.0 * Aa * dchi_chi + (Aa - Ab) * (2.0 / r + db / b_reg))
     t6 = (2.0 / a_reg) * (alpha_reg * dTheta - Theta * dalpha - (2.0 / 3.0) * alpha_reg * K * Zr)
     t7 = (2.0 / a_reg) * ((2.0 / 3.0) * Zr * div_beta - Zr * dbeta) - (2.0 / a_reg) * kappa1_local * Zr
     dt_Lambda = t1 + t2 + t3 + t4 + t5 + t6 + t7
 
-    # GAUGE 
-    dt_alpha = - 2.0 * alpha * (K - 2.0 * Theta)
-    dt_beta = B_shift
+   # GAUGE
+    dt_alpha =  - 2.0 * alpha * (K - 2.0 * Theta)
+    
+    
+    dt_beta = 0.75 * B_shift
+    
     eta_local = eta_param
-    dt_B = 0.75 * dt_Lambda - eta_local * B_shift
+    
+    dt_B = dt_Lambda - eta_local * B_shift
 
     # PROJEÇÃO PARES E ÍMPARES
     return np.array([
@@ -195,7 +197,7 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
         np.dot(dt_Lambda, inv_psi2), # ÍMPAR
         np.dot(dt_alpha, inv_psi),   # Par
         np.dot(dt_beta, inv_psi2),   # ÍMPAR
-        np.dot(dt_B, inv_psi)        # Par
+        np.dot(dt_B, inv_psi2)       # AGORA É ÍMPAR!
     ])
 
 ## =========================================================================
@@ -239,11 +241,16 @@ def simular_e_filmar_gauge(L0, N, tf, h, k1, eta_param, frames_qtd=300):
             s = passo_rk4(s, h, k1, k2, eta_param, b)
 
             # Filtros 
+            s[0] *= b['filtro'] # chi
+            s[1] *= b['filtro'] # chi
             s[2] *= b['filtro'] # chi
-            s[3] *= b['filtro'] # K
+            s[3] *= b['filtro'] # 
+            s[4] *= b['filtro']
             s[5] *= b['filtro'] # Theta
             s[6] *= b['filtro'] # Lambda
             s[7] *= b['filtro'] # alpha
+            s[8] *= b['filtro'] # beta
+            s[9] *= b['filtro'] # B
 
             tempo_atual = (i + 1) * h
 
@@ -322,7 +329,7 @@ def simular_e_filmar_gauge(L0, N, tf, h, k1, eta_param, frames_qtd=300):
 # =========================================================================
 tf_filme = 40.0
 k1_alvo = 1.0
-eta_alvo = 2.0
+eta_alvo = 1.0
 
 print(f"Iniciando simulação principal de {tf_filme}M (k1={k1_alvo}, eta={eta_alvo})...")
 
@@ -336,7 +343,7 @@ print("\nGerando animação... Preparando os gráficos.")
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 limite_raio = 15.0 
 
-ax1.set_xlim(0.0, limite_raio); ax1.set_ylim(-0.05, 1.25)
+ax1.set_xlim(0.0, limite_raio); ax1.set_ylim(-0.05, 2.0)
 ax1.set_xlabel("Raio isotrópico (r/M)"); ax1.set_ylabel(r"Fator Lapso ($\alpha$)")
 ax1.grid(True)
 

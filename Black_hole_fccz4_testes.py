@@ -3,38 +3,43 @@ import time
 import math
 
 # =========================================================================
-# 1. ARQUITETURA DE DOMÍNIO E BASES DE PARIDADE
+# 1. ARQUITETURA DE DOMÍNIO (MALHA PERFEITA) E BASES DE PARIDADE
 # =========================================================================
-def configurar_bases_fccz4(L0, N, n1_param=10.0): # <--- n1 AGORA É UM PARÂMETRO!
-    # A sacada de mestre: ignoramos o índice 0 para nunca tocar no r=0 exato
-    col = np.cos(np.arange(2*N + 4) * math.pi / (2*N + 3))
-    colr = col[1:N+2]
-    r1 = L0 * colr / (np.sqrt(1 - colr**2))
-    r = np.flip(r1)
+def configurar_bases_fccz4(L0, N, n1_param=5.0):
+    # Distribuição Exata de Gauss-Chebyshev (Cura o Fenômeno de Gibbs)
+    M_total = 2 * (N + 1)
+    x_full = np.cos((2 * np.arange(M_total) + 1) * np.pi / (2 * M_total))
+    x = x_full[:N+1]   # Apenas a metade positiva
+    r = L0 * x / np.sqrt(1.0 - x**2)
+    r = np.sort(r)     # Crescente do Buraco Negro para o Infinito
 
-    # Matrizes para Variáveis PARES (alpha, chi, a, b, K, Aa, Theta, B)
+    # Matrizes para Variáveis PARES e ÍMPARES
     SB = np.zeros([N+1, N+1])
     rSB = np.zeros([N+1, N+1])
     rrSB = np.zeros([N+1, N+1])
 
-    # Matrizes para Variáveis ÍMPARES (beta, Lambda)
     SB2 = np.zeros([N+1, N+1])
     rSB2 = np.zeros([N+1, N+1])
     rrSB2 = np.zeros([N+1, N+1])
 
+    theta = np.arctan(L0/r)
+    
     for i in range(N+1):
-        # BASE PAR
-        SB[i, :] = np.sin((2*i + 1) * np.arctan(L0/r))
-        rSB[i, :] = -np.cos((2*i + 1) * np.arctan(L0/r)) * (2*i + 1) * L0 / (r**2 * (1 + L0**2 / r**2))
-        rrSB[i, :] = -np.sin((2*i + 1) * np.arctan(L0/r)) * (2*i + 1)**2 * L0**2 / (r**4 * (1 + L0**2 / r**2)**2) \
-                     + 2 * np.cos((2*i + 1) * np.arctan(L0/r)) * (2*i + 1) * L0 / (r**3 * (1 + L0**2 / r**2)) \
-                     - 2 * np.cos((2*i + 1) * np.arctan(L0/r)) * (2*i + 1) * L0**3 / (r**5 * (1 + L0**2 / r**2)**2)
-        # BASE ÍMPAR:
-        SB2[i, :] = np.sin((2*i + 2) * np.arctan(L0/r))
-        rSB2[i, :] = -np.cos((2*i + 2) * np.arctan(L0/r)) * (2*i + 2) * L0 / (r**2 * (1 + L0**2 / r**2))
-        rrSB2[i, :] = -np.sin((2*i + 2) * np.arctan(L0/r)) * (2*i + 2)**2 * L0**2 / (r**4 * (1 + L0**2 / r**2)**2) \
-                      + 2 * np.cos((2*i + 2) * np.arctan(L0/r)) * (2*i + 2) * L0 / (r**3 * (1 + L0**2 / r**2)) \
-                      - 2 * np.cos((2*i + 2) * np.arctan(L0/r)) * (2*i + 2) * L0**3 / (r**5 * (1 + L0**2 / r**2)**2)
+        # BASE PAR (k = 2i+1)
+        k_odd = 2*i + 1
+        SB[i, :] = np.sin(k_odd * theta)
+        rSB[i, :] = -np.cos(k_odd * theta) * k_odd * L0 / (r**2 * (1.0 + L0**2 / r**2))
+        rrSB[i, :] = (-np.sin(k_odd * theta) * k_odd**2 * L0**2 / (r**4 * (1.0 + L0**2 / r**2)**2) 
+                      + 2.0 * np.cos(k_odd * theta) * k_odd * L0 / (r**3 * (1.0 + L0**2 / r**2)) 
+                      - 2.0 * np.cos(k_odd * theta) * k_odd * L0**3 / (r**5 * (1.0 + L0**2 / r**2)**2))
+
+        # BASE ÍMPAR (k = 2i+2)
+        k_even = 2*i + 2
+        SB2[i, :] = np.sin(k_even * theta)
+        rSB2[i, :] = -np.cos(k_even * theta) * k_even * L0 / (r**2 * (1.0 + L0**2 / r**2))
+        rrSB2[i, :] = (-np.sin(k_even * theta) * k_even**2 * L0**2 / (r**4 * (1.0 + L0**2 / r**2)**2) 
+                       + 2.0 * np.cos(k_even * theta) * k_even * L0 / (r**3 * (1.0 + L0**2 / r**2)) 
+                       - 2.0 * np.cos(k_even * theta) * k_even * L0**3 / (r**5 * (1.0 + L0**2 / r**2)**2))
 
     # Inversas
     inv_psi = np.linalg.pinv(SB)
@@ -43,7 +48,7 @@ def configurar_bases_fccz4(L0, N, n1_param=10.0): # <--- n1 AGORA É UM PARÂMET
     # Filtro Erfc
     erfc_vec = np.vectorize(math.erfc)
     eta1 = np.arange(1, N + 2) / (N + 1)
-    n1 = n1_param  # <--- UTILIZANDO O PARÂMETRO DA FUNÇÃO
+    n1 = n1_param
     u = eta1 - 0.5
     u_sq = u**2
     arg = np.clip(1.0 - 4.0 * u_sq, 1e-14, 1.0)

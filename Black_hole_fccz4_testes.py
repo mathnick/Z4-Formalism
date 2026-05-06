@@ -1,6 +1,7 @@
 import numpy as np
 import time
 import math
+import os
 
 # =========================================================================
 # 1. ARQUITETURA DE DOMÍNIO (MALHA PERFEITA) E BASES DE PARIDADE
@@ -64,7 +65,7 @@ def configurar_bases_fccz4(L0, N, n1_param=5.0):
     }
 
 # =========================================================================
-# 2. CONDIÇÕES INICIAIS (Atenção à Projeção das Ímpares)
+# 2. CONDIÇÕES INICIAIS
 # =========================================================================
 def criar_condicoes_iniciais_fccz4(b, M=1.0):
     r = b['r']
@@ -73,41 +74,35 @@ def criar_condicoes_iniciais_fccz4(b, M=1.0):
     alpha_0 = psi_bh**(-2)
     zeros = np.zeros_like(r)
     
-    inv_psi = b['inv_psi']   # Base Par
-    inv_psi2 = b['inv_psi2'] # Base Ímpar
+    inv_psi = b['inv_psi']
+    inv_psi2 = b['inv_psi2']
 
-    # Indices: 0:a, 1:b, 2:chi, 3:K, 4:Aa, 5:Theta, 6:Lambda(Ímpar), 7:alpha, 8:beta(Ímpar), 9:B
     return np.array([
-        np.dot(zeros, inv_psi),          # c_a (Par)
-        np.dot(zeros, inv_psi),          # c_b (Par)
-        np.dot(chi_0 - 1.0, inv_psi),    # c_chi (Par)
-        np.dot(zeros, inv_psi),          # c_K (Par)
-        np.dot(zeros, inv_psi),          # c_Aa (Par)
-        np.dot(zeros, inv_psi),          # c_Theta (Par)
-        np.dot(zeros, inv_psi2),         # c_Lambda (ÍMPAR) <--- NOVO
-        np.dot(alpha_0 - 1.0, inv_psi),  # c_alpha (Par)
-        np.dot(zeros, inv_psi2),         # c_beta (ÍMPAR) <--- NOVO
-        np.dot(zeros, inv_psi2)           # c_B (Par)
+        np.dot(zeros, inv_psi),          # c_a
+        np.dot(zeros, inv_psi),          # c_b
+        np.dot(chi_0 - 1.0, inv_psi),    # c_chi
+        np.dot(zeros, inv_psi),          # c_K
+        np.dot(zeros, inv_psi),          # c_Aa
+        np.dot(zeros, inv_psi),          # c_Theta
+        np.dot(zeros, inv_psi2),         # c_Lambda (ÍMPAR)
+        np.dot(alpha_0 - 1.0, inv_psi),  # c_alpha
+        np.dot(zeros, inv_psi2),         # c_beta (ÍMPAR)
+        np.dot(zeros, inv_psi2)          # c_B (ÍMPAR)
     ])
 
 # =========================================================================
 # 3. EVOLUÇÃO fCCZ4 
 # =========================================================================
 def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
-    # Desempacotamento
     c_a, c_b, c_chi = state[0], state[1], state[2]
     c_K, c_Aa, c_Theta = state[3], state[4], state[5]
-    c_Lambda = state[6] # ÍMPAR
-    c_alpha = state[7]
-    c_beta = state[8]   # ÍMPAR
-    c_B = state[9]      # ÍMPAR (Estava Par!)
+    c_Lambda, c_alpha, c_beta, c_B = state[6], state[7], state[8], state[9]
 
-    # Matrizes
     psi, rpsi, rrpsi, inv_psi = b['psi'], b['rpsi'], b['rrpsi'], b['inv_psi']
     psi2, rpsi2, rrpsi2, inv_psi2 = b['psi2'], b['rpsi2'], b['rrpsi2'], b['inv_psi2']
     r = b['r']
 
-    # RECONSTRUÇÃO VARIÁVEIS PARES
+    # RECONSTRUÇÃO
     a = 1.0 + np.dot(c_a, psi); da = np.dot(c_a, rpsi); dda = np.dot(c_a, rrpsi)
     b_met = 1.0 + np.dot(c_b, psi); db = np.dot(c_b, rpsi); ddb = np.dot(c_b, rrpsi)
     alpha = 1.0 + np.dot(c_alpha, psi); dalpha = np.dot(c_alpha, rpsi); ddalpha = np.dot(c_alpha, rrpsi)
@@ -116,12 +111,11 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     Aa = np.dot(c_Aa, psi); dAa = np.dot(c_Aa, rpsi)
     Theta = np.dot(c_Theta, psi); dTheta = np.dot(c_Theta, rpsi)
 
-    # RECONSTRUÇÃO VARIÁVEIS ÍMPARES
     beta = np.dot(c_beta, psi2); dbeta = np.dot(c_beta, rpsi2); ddbeta = np.dot(c_beta, rrpsi2)
     Lambda = np.dot(c_Lambda, psi2); dLambda = np.dot(c_Lambda, rpsi2)
-    B_shift = np.dot(c_B, psi2); dB_shift = np.dot(c_B, rpsi2) # AGORA ESTÁ NA BASE ÍMPAR CORRETA
+    B_shift = np.dot(c_B, psi2); dB_shift = np.dot(c_B, rpsi2)
 
-    # Regularização Suave Original
+    # Regularização
     eps_sq = 1e-24
     chi_reg = np.sqrt(chi**2 + eps_sq)
     a_reg = np.sqrt(a**2 + eps_sq)
@@ -132,11 +126,9 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     ddchi_chi = ddchi / chi_reg
     Ab = - (b_reg / (2.0 * a_reg)) * Aa
 
-    
     div_beta = dbeta + beta * (db / b_reg + da / (2.0 * a_reg) + 2.0 / r)
     d_div_beta = ddbeta + dbeta * (db / b_reg + da / (2.0 * a_reg) + 2.0 / r) + beta * ((ddb * b_reg - db**2) / (b_reg**2) + (dda * a_reg - da**2) / (2.0 * a_reg**2) - 2.0 / (r**2))
 
-    
     kappa1_local = kappa1 
     kappa2 = 0
 
@@ -169,8 +161,8 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     dt_b = beta * db + 2.0 * b_reg * beta / r - (2.0 / 3.0) * b_reg * div_beta - 2.0 * alpha_reg * b_reg * Ab
     dt_chi = beta * dchi - (1.0 / 3.0) * chi_reg * div_beta + (1.0 / 6.0) * chi_reg * alpha_reg * K
     
-    dt_K = - D2_alpha + alpha_reg * (Ricci + 2.0 * Dm_Zm + K**2 - 2.0 * Theta * K) + beta * dK - 3.0 * alpha_reg * kappa1_local * (1.0 + kappa2) * Theta
-    dt_Theta = beta * dTheta + 0.5 * alpha_reg * (Ricci + 2.0 * Dm_Zm - (Aa**2 + 2.0 * Ab**2) + (2.0 / 3.0) * K**2 - 2.0 * Theta * K) - Zr_up * dalpha - alpha_reg * kappa1_local * (2.0 + kappa2) * Theta
+    dt_K = - D2_alpha + alpha_reg * (Ricci + 2.0 * Dm_Zm + K**2 - 2.0 * Theta * K) + beta * dK - 3.0 * alpha_reg * kappa1_local * Theta
+    dt_Theta = beta * dTheta + 0.5 * alpha_reg * (Ricci + 2.0 * Dm_Zm - (Aa**2 + 2.0 * Ab**2) + (2.0 / 3.0) * K**2 - 2.0 * Theta * K) - Zr_up * dalpha - alpha_reg * kappa1_local * 2.0 * Theta
     dt_Aa = beta * dAa - (DrDr_alpha - (1.0 / 3.0) * D2_alpha) + alpha_reg * ((chi_sq / a_reg) * R_rr - (1.0 / 3.0) * Ricci) + alpha_reg * (2.0 * Dr_Zr - (2.0 / 3.0) * Dm_Zm) + alpha_reg * Aa * (K - 2.0 * Theta)
 
     t1 = beta * dLambda - Lambda * dbeta + (1.0 / a_reg) * ddbeta + (2.0 / b_reg) * (dbeta / r - beta / (r**2))
@@ -182,32 +174,27 @@ def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
     t7 = (2.0 / a_reg) * ((2.0 / 3.0) * Zr * div_beta - Zr * dbeta) - (2.0 / a_reg) * kappa1_local * Zr
     dt_Lambda = t1 + t2 + t3 + t4 + t5 + t6 + t7
 
-   # GAUGE
+    # GAUGE INTELIGENTE 
     dt_alpha = - 2.0 * alpha * (K - 2.0 * Theta)
-    
-    
     dt_beta = 0.75 * B_shift
-    
-    eta_local = eta_param
-    
+    eta_local = eta_param * (1.0 - chi_reg)
     dt_B = dt_Lambda - eta_local * B_shift
 
-    # PROJEÇÃO PARES E ÍMPARES
     return np.array([
-        np.dot(dt_a, inv_psi),       # Par
-        np.dot(dt_b, inv_psi),       # Par
-        np.dot(dt_chi, inv_psi),     # Par
-        np.dot(dt_K, inv_psi),       # Par
-        np.dot(dt_Aa, inv_psi),      # Par
-        np.dot(dt_Theta, inv_psi),   # Par
-        np.dot(dt_Lambda, inv_psi2), # ÍMPAR
-        np.dot(dt_alpha, inv_psi),   # Par
-        np.dot(dt_beta, inv_psi2),   # ÍMPAR
-        np.dot(dt_B, inv_psi2)       # AGORA É ÍMPAR!
+        np.dot(dt_a, inv_psi),       
+        np.dot(dt_b, inv_psi),       
+        np.dot(dt_chi, inv_psi),     
+        np.dot(dt_K, inv_psi),       
+        np.dot(dt_Aa, inv_psi),      
+        np.dot(dt_Theta, inv_psi),   
+        np.dot(dt_Lambda, inv_psi2), 
+        np.dot(dt_alpha, inv_psi),   
+        np.dot(dt_beta, inv_psi2),   
+        np.dot(dt_B, inv_psi2)       
     ])
 
 # =========================================================================
-# 4. INTEGRADOR RK4 COM FILTROS DINÂMICOS
+# 4. INTEGRADOR RK4 COM RASTREADOR DE EXTREMOS
 # =========================================================================
 def passo_rk4(s, h, k1, k2, eta, b):
     k_1 = calcular_taxas_fccz4(s, k1, k2, eta, b)
@@ -222,32 +209,28 @@ def simular_varredura_filtros(L0, N, tf, h, k1, eta_param, n1_param, vars_to_fil
     k2 = 0.0
     r_grid = b['r']
     psi_mat, rpsi_mat, rrpsi_mat = b['psi'], b['rpsi'], b['rrpsi']
-    psi2_mat, rpsi2_mat = b['psi2'], b['rpsi2']
+    psi2_mat = b['psi2']
     
     passos_totais = int(tf/h)
-    passos_salvar = 500
-    tempo_sobrevivido = 0.0
+    passos_salvar = max(1, int(0.5/h)) 
     
-    # Inicializando as variáveis para evitar erro caso o código quebre no passo 1
-    erro_H_final = 0.0
-    erro_M_final = 0.0
-    min_beta = 0.0 
+    tempo_sobrevivido = 0.0
+    erro_H_final, erro_M_final = 0.0, 0.0
+    ult_min_b, ult_max_b, ult_min_a, ult_max_a = 0.0, 0.0, 0.0, 0.0
 
     nome_arquivo = f"evolucao_filtro_{id_teste}_n1_{n1_param}.txt"
     
     with open(nome_arquivo, "w") as arquivo_dados:
-        arquivo_dados.write("Tempo_M, L2_H, L2_Mr, Beta_Minimo\n")
+        arquivo_dados.write("Tempo_M, L2_H, L2_Mr, Min_Beta, Max_Beta, Min_Alpha, Max_Alpha\n")
 
         for i in range(passos_totais):
             s = passo_rk4(s, h, k1, k2, eta_param, b)
             
-            # Aplicação Dinâmica de Filtros
             for idx in vars_to_filter:
                 s[idx] *= b['filtro']
             
             tempo_atual = (i + 1) * h
             
-            # CÁLCULO DE ERROS E GRAVAÇÃO
             if i % passos_salvar == 0 or i == passos_totais - 1:
                 a_at = 1.0 + np.dot(s[0], psi_mat)
                 b_at = 1.0 + np.dot(s[1], psi_mat)
@@ -264,9 +247,11 @@ def simular_varredura_filtros(L0, N, tf, h, k1, eta_param, n1_param, vars_to_fil
                 ddb_at = np.dot(s[1], rrpsi_mat)
                 ddchi_at = np.dot(s[2], rrpsi_mat)
                 
-                # RECONSTRUÇÃO DO BETA PARA ACHAR O MÍNIMO
+                alpha_at = 1.0 + np.dot(s[7], psi_mat)
                 beta_at = np.dot(s[8], psi2_mat)
-                min_beta = np.min(beta_at) 
+                
+                ult_min_b, ult_max_b = np.min(beta_at), np.max(beta_at)
+                ult_min_a, ult_max_a = np.min(alpha_at), np.max(alpha_at)
                 
                 a_reg = np.sqrt(a_at**2 + 1e-12)
                 b_reg = np.sqrt(b_at**2 + 1e-12)
@@ -301,56 +286,52 @@ def simular_varredura_filtros(L0, N, tf, h, k1, eta_param, n1_param, vars_to_fil
                 
                 tempo_sobrevivido = tempo_atual
                 
-                # IMPRIME NO TERMINAL (Agora com o Min Beta)
                 if i % (passos_salvar * 10) == 0:
-                    print(f" Progresso: {tempo_sobrevivido:.2f}M | L2(H): {erro_H_final:.2e} | L2(Mr): {erro_M_final:.2e} | Min(beta): {min_beta:.4e}")
+                    print(f" Progresso: {tempo_sobrevivido:.2f}M | L2(H): {erro_H_final:.2e} | Beta: [{ult_min_b:.3f}, {ult_max_b:.3f}] | Alpha: [{ult_min_a:.3f}, {ult_max_a:.3f}]")
                 
-                arquivo_dados.write(f"{tempo_sobrevivido:.4f}, {erro_H_final:.8e}, {erro_M_final:.8e}, {min_beta:.8e}\n")
+                arquivo_dados.write(f"{tempo_sobrevivido:.4f}, {erro_H_final:.8e}, {erro_M_final:.8e}, {ult_min_b:.8e}, {ult_max_b:.8e}, {ult_min_a:.8e}, {ult_max_a:.8e}\n")
                 arquivo_dados.flush()
 
-            # DETETIVE DE CRASH
             if np.isnan(s).any() or np.max(np.abs(s)) > 1e11:
                 break
                 
-    # Agora a função devolve 4 valores
-    return tempo_sobrevivido, erro_H_final, erro_M_final, min_beta
+    return tempo_sobrevivido, erro_H_final, erro_M_final, ult_min_b, ult_max_b, ult_min_a, ult_max_a
 
 
 # =========================================================================
-# 5. GERENCIADOR DA VARREDURA DE FILTROS
+# 5. GERENCIADOR DA VARREDURA DE FILTROS E CONFIGURAÇÕES
 # =========================================================================
 if __name__ == "__main__":
     tf_alvo = 20.0
     k1_fixo = 1.0
-    eta_fixo = 2.0
-    
+    eta_fixo = 2.0 # Mantemos fixo como vc pediu para testar os filtros primeiro
     
     n1_testes = [5.0, 10.0, 20.0, 50.0, 100.0, 1000.0]
     
-    # Dicionário de Configurações de Filtro (Lista de índices que vão ser filtrados)
-    # Índices: 0:a, 1:b, 2:chi, 3:K, 4:Aa, 5:Theta, 6:Lambda, 7:alpha, 8:beta, 9:B
     configs_filtros = {
-        "Cfg1_Original": [2, 3, 5, 6, 7],               # A sua favorita atual
-        "Cfg2_ComBeta": [2, 3, 5, 6, 7, 8],             # Adicionando só o Shift
-        "Cfg3_ComBetaEB": [2, 3, 5, 6, 7, 8, 9],        # Adicionando Shift e Auxiliar
-        "Cfg4_TudoMenosMetrica": [2, 3, 4, 5, 6, 7, 8, 9], # Incluindo a Curvatura Aa
-        "Cfg5_Agressivo": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] # Passando a lixa em todo mundo
+        "Cfg1_Original": [2, 3, 5, 6, 7],               
+        "Cfg2_ComBeta": [2, 3, 5, 6, 7, 8],             
+        "Cfg3_ComBetaEB": [2, 3, 5, 6, 7, 8, 9],        
+        "Cfg4_TudoMenosMetrica": [2, 3, 4, 5, 6, 7, 8, 9], 
+        "Cfg5_Agressivo": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] 
     }
 
-    print("=" * 60)
-    print(f"INICIANDO VARREDURA DE FILTROS (k1={k1_fixo}, eta={eta_fixo})")
-    print("=" * 60)
+    print("=" * 90)
+    print(f"INICIANDO VARREDURA COMPLETA (Malha Chebyshev, Eta Dinâmico, k1={k1_fixo}, eta={eta_fixo})")
+    print("=" * 90)
 
-    # Cria arquivo mestre de resultados
-    with open("Resumo_Varredura_Filtros.txt", "w") as resumo:
-        resumo.write("Configuracao, n1, Tempo_Final, Erro_H, Erro_Mr\n")
+    DIRETORIO_ATUAL = os.path.dirname(os.path.abspath(__file__))
+    nome_resumo = os.path.join(DIRETORIO_ATUAL, "Resumo_Varredura_Filtros_Completa.txt")
+
+    with open(nome_resumo, "w") as resumo:
+        resumo.write("Configuracao, n1, Tempo_Final, Erro_H, Erro_Mr, Min_Beta, Max_Beta, Min_Alpha, Max_Alpha\n")
         
         for n1_atual in n1_testes:
             for nome_cfg, var_lista in configs_filtros.items():
                 print(f"\nTestando: {nome_cfg} | n1 = {n1_atual}")
                 
                 t_inicio = time.time()
-                t_final, err_H, err_M, min_b = simular_varredura_filtros(
+                t_final, err_H, err_M, min_b, max_b, min_a, max_a = simular_varredura_filtros(
                     L0=5.0, N=150, tf=tf_alvo, h=0.0001, 
                     k1=k1_fixo, eta_param=eta_fixo, 
                     n1_param=n1_atual, vars_to_filter=var_lista, id_teste=nome_cfg
@@ -361,7 +342,7 @@ if __name__ == "__main__":
                 status = "SOBREVIVEU!" if t_final >= tf_alvo - 0.01 else "CRASH"
                 print(f"Resultado: {status} em t = {t_final:.2f}M ({duracao:.1f} min)")
                 
-                resumo.write(f"{nome_cfg}, {n1_atual}, {t_final:.4f}, {err_H:.8e}, {err_M:.8e}\n")
+                resumo.write(f"{nome_cfg}, {n1_atual}, {t_final:.4f}, {err_H:.8e}, {err_M:.8e}, {min_b:.8e}, {max_b:.8e}, {min_a:.8e}, {max_a:.8e}\n")
                 resumo.flush()
 
-    print("\nVarredura concluída! Confira os gráficos e arquivos txt gerados.")
+    print("\nVarredura concluída! Confira os arquivos txt gerados.")

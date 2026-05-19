@@ -1,276 +1,365 @@
 import numpy as np
+import time
+import os
 import matplotlib.pyplot as plt
-import math
+import matplotlib.animation as animation
 
 # =========================================================================
-# 1. ARQUITETURA DE DOMÍNIO ÚNICO (Sem a origem r=0) E FILTRO ERFC
+# PARÂMETROS GERAIS
 # =========================================================================
-def configurar_base_unica(L0, N):
-    j = np.arange(1, N + 2)
-    xi = np.cos(j * np.pi / (N + 2)) 
-    
-    x_min, x_max = -1.0, 1.0
-    x_global = x_min + (x_max - x_min) * (xi + 1.0) / 2.0
-    r = L0 * (1.0 + x_global) / (1.0 - x_global)
-    
-    r = np.flip(r)
-    xi_flip = np.flip(xi)
-    
-    psi = np.zeros([N+1, N+1])
-    rpsi = np.zeros([N+1, N+1])
-    rrpsi = np.zeros([N+1, N+1])
-    
-    dr_dx = (r + L0)**2 / (2.0 * L0)
-    dx_dxi = (x_max - x_min) / 2.0
-    dxi_dr = 1.0 / (dr_dx * dx_dxi)
-    d2xi_dr2 = - (2.0 / (r + L0)) * dxi_dr
+tf = 40.0
+h = 0.0002
+L0 = 15.0
 
-    for i in range(N+1):
-        theta = np.arccos(xi_flip)
-        T_i = np.cos(i * theta)
-        if i == 0:
-            dT_i, d2T_i = np.zeros_like(xi_flip), np.zeros_like(xi_flip)
-        else:                                        
-            sin_t = np.sin(theta)
-            dT_i = i * np.sin(i * theta) / sin_t
-            d2T_i = -i**2 * np.cos(i * theta) / (sin_t**2) + i * np.sin(i * theta) * xi_flip / (sin_t**3)
-        psi[i, :] = T_i
-        rpsi[i, :] = dT_i * dxi_dr
-        rrpsi[i, :] = d2T_i * (dxi_dr**2) + dT_i * d2xi_dr2
+xi = 2.0
+eta0 = 2.0
+f0 = 3.0 / 4.0
+nc = 2.0
+k1 = 15.0
+k2 = 0.0
+p = 200
+Nq = int((3.0 / 2.0) * p)
 
-    inv_psi = np.linalg.inv(psi)      
-
-    erfc_vec = np.vectorize(math.erfc)
-    eta1 = np.arange(1, N + 2) / (N + 1)
-    n1 = 10.0
-    u = eta1 - 0.5
-    u_sq = u**2
-    arg = np.clip(1.0 - 4.0 * u_sq, 1e-14, 1.0)
-    denom = np.clip(4.0 * u_sq, 1e-14, 1.0)
-    sqrt_term = np.sqrt(-np.log(arg) / denom)
-    sqrt_term[np.abs(u) < 1e-8] = 1.0 
-    filtro_erfc = 0.5 * erfc_vec(2.0 * np.sqrt(n1) * u * sqrt_term)
-
-    return {'r': r, 'psi': psi, 'rpsi': rpsi, 'rrpsi': rrpsi, 'inv_psi': inv_psi, 'N': N, 'filtro': filtro_erfc}
+io = 1       # Modos: escreve os modos a, b, c, etc.
+idump = 200
+t2 = 0.0     # Instante a partir do qual salvo os modos
 
 # =========================================================================
-# 2. CONDIÇÕES INICIAIS (Fator Conforme chi)
-# =========================================================================                                                              
-def criar_condicoes_iniciais_fccz4(b, M=1.0):
-    r = b['r']
-    psi_bh = 1.0 + M / (2.0 * r)
-    chi_0 = psi_bh**(-2)  
-    alpha_0 = psi_bh**(-2)  
-    zeros = np.zeros_like(r)
-    inv_psi = b['inv_psi']
-    return np.array([np.dot(zeros, inv_psi), np.dot(zeros, inv_psi), 
-                     np.dot(chi_0 - 1.0, inv_psi), np.dot(zeros, inv_psi), np.dot(zeros, inv_psi), 
-                     np.dot(zeros, inv_psi), np.dot(zeros, inv_psi), np.dot(alpha_0 - 1.0, inv_psi), 
-                     np.dot(zeros, inv_psi), np.dot(zeros, inv_psi)])
+# LIMPEZA DE ARQUIVOS E INICIALIZAÇÃO
+# =========================================================================
+open('ErrorL2HC.txt', 'w').close()
+open('ErrorL2MC.txt', 'w').close()
 
+if io == 1:
+    arquivos_modos = ['al.txt', 'c.txt', 'be.txt', 'cK.txt', 'f.txt', 'fa.txt', 'fb.txt']
+    for arquivo in arquivos_modos:
+        open(arquivo, 'w').close()
+
+niter = 0
+t = 0.0
+
+print(f'Evolução do Puncture iniciada às {time.strftime("%Hh %Mm")}')
+t_start = time.time()
 
 # =========================================================================
-# 3. EVOLUÇÃO fCCZ4 (EQUAÇÕES DO ARTIGO)
+# LEITURA DE MATRIZES EXTERNAS (ALTA PRECISÃO)
 # =========================================================================
-def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
-    # ATENÇÃO: Criação de cópias (não usar *= para não quebrar a memória do RK4)
-    c_a = state[0] * b['filtro']; c_b = state[1] * b['filtro']; c_chi = state[2] * b['filtro']
-    c_K = state[3] * b['filtro']; c_Aa = state[4] * b['filtro']; c_Theta = state[5] * b['filtro']
-    c_Lambda = state[6] * b['filtro']; c_alpha = state[7] * b['filtro']; c_beta = state[8] * b['filtro']; c_B = state[9] * b['filtro']
+pasta_atual = os.path.dirname(os.path.abspath(__file__))
 
-    psi, rpsi, rrpsi, inv_psi, r = b['psi'], b['rpsi'], b['rrpsi'], b['inv_psi'], b['r']                     
-    a = 1.0 + np.dot(c_a, psi); da = np.dot(c_a, rpsi); dda = np.dot(c_a, rrpsi)
-    b_met = 1.0 + np.dot(c_b, psi); db = np.dot(c_b, rpsi); ddb = np.dot(c_b, rrpsi)
-    alpha = 1.0 + np.dot(c_alpha, psi); dalpha = np.dot(c_alpha, rpsi); ddalpha = np.dot(c_alpha, rrpsi)
-    chi = 1.0 + np.dot(c_chi, psi); dchi = np.dot(c_chi, rpsi); ddchi = np.dot(c_chi, rrpsi)
-    beta = np.dot(c_beta, psi); dbeta = np.dot(c_beta, rpsi); ddbeta = np.dot(c_beta, rrpsi)
-    B_shift = np.dot(c_B, psi); Lambda = np.dot(c_Lambda, psi); dLambda = np.dot(c_Lambda, rpsi)
-    K = np.dot(c_K, psi); dK = np.dot(c_K, rpsi); Aa = np.dot(c_Aa, psi); dAa = np.dot(c_Aa, rpsi)
-    Theta = np.dot(c_Theta, psi); dTheta = np.dot(c_Theta, rpsi)
-    
-    # Regularização Suave
-    eps_sq = 1e-24
-    chi_reg = np.sqrt(chi**2 + eps_sq)
-    a_reg = np.sqrt(a**2 + eps_sq)
-    b_reg = np.sqrt(b_met**2 + eps_sq)
-    alpha_reg = np.sqrt(alpha**2 + eps_sq)
-    
-    chi_sq = chi_reg**2
-    dchi_chi = dchi / chi_reg
-    ddchi_chi = ddchi / chi_reg                                        
-    Ab = - (b_reg / (2.0 * a_reg)) * Aa  
-    
-    div_beta = dbeta + beta * (db / b_reg + da / (2.0 * a_reg) + 2.0 / r)
-    d_div_beta = ddbeta + dbeta * (db / b_reg + da / (2.0 * a_reg) + 2.0 / r) + beta * ((ddb * b_reg - db**2) / (b_reg**2) + (dda * a_reg - da**2) / (2.0 * a_reg**2) - 2.0 / r**2)
-    
-    bar_Lambda = (1.0 / a_reg) * (da / (2.0 * a_reg) - db / b_reg - (2.0 / r) * (1.0 - a_reg / b_reg))
-    Zr = (a_reg / 2.0) * (Lambda - bar_Lambda); Zr_up = Zr / a_reg
-    dZr = np.dot(np.dot(Zr, inv_psi), rpsi); dZr_up = (1.0 / a_reg) * dZr - (Zr / a_reg**2) * da
-    
-    Dm_Zm = dZr_up + Zr_up * (da / (2.0 * a_reg) + db / b_reg + 2.0 / r - 3.0 * dchi_chi)
-    Dr_Zr = dZr_up + Zr_up * (da / (2.0 * a_reg) - 1.0 * dchi_chi)
+def carregar_arquivo(nome):
+    caminho = os.path.join(pasta_atual, nome)
+    if not os.path.exists(caminho):
+        caminho_com_txt = caminho + '.txt'
+        if os.path.exists(caminho_com_txt):
+            caminho = caminho_com_txt
+        else:
+            raise FileNotFoundError(f"Não encontrei o ficheiro {nome} nem {nome}.txt na pasta {pasta_atual}")
+    return np.loadtxt(caminho)
 
-    bar_R_rr = - ddb / b_reg + (db**2) / (2.0 * b_reg**2) + (da * db) / (2.0 * a_reg * b_reg) + 2.0 * da / (r * a_reg)
-    bar_R_tt = - (r**2 * ddb) / (2.0 * a_reg) - (3.0 * r * db) / (2.0 * a_reg) + (r**2 * da * db) / (4.0 * a_reg**2) + (r * da) / (2.0 * a_reg) + 1.0 - a_reg / b_reg
-    
-    R_rr = bar_R_rr + ddchi_chi - (da / (2.0 * a_reg)) * dchi_chi + 2.0 * dchi_chi * (1.0 / r + db / (2.0 * b_reg))
-    R_tt = bar_R_tt + (r**2 * b_reg / a_reg) * ddchi_chi + (r**2 * b_reg / a_reg) * 2.0 * dchi_chi * (1.0 / r + db / (2.0 * b_reg) - da / (4.0 * a_reg))
-    Ricci = (chi_sq / a_reg) * R_rr + 2.0 * (chi_sq / (r**2 * b_reg)) * R_tt                        
-    
-    D2_alpha = (chi_sq / a_reg) * ddalpha + (chi_sq / a_reg) * dalpha * (2.0 / r + db / b_reg - da / (2.0 * a_reg) + dchi_chi)
-    DrDr_alpha = (chi_sq / a_reg) * (ddalpha - dalpha * (da / (2.0 * a_reg) + dchi_chi)) 
-    
-    dt_a = beta * da + 2.0 * a_reg * dbeta - (2.0 / 3.0) * a_reg * div_beta - 2.0 * alpha_reg * a_reg * Aa
-    dt_b = beta * db + 2.0 * b_reg * beta / r - (2.0 / 3.0) * b_reg * div_beta - 2.0 * alpha_reg * b_reg * Ab
-    dt_chi = beta * dchi - (1.0 / 6.0) * chi_reg * div_beta + (1.0 / 6.0) * chi_reg * alpha_reg * K
-    dt_K = - D2_alpha + alpha_reg * (Ricci + 2.0 * Dm_Zm + K**2 - 2.0 * Theta * K) + beta * dK - 3.0 * alpha_reg * kappa1 * (1.0 + kappa2) * Theta
-    dt_Theta = beta * dTheta + 0.5 * alpha_reg * (Ricci + 2.0 * Dm_Zm - (Aa**2 + 2.0 * Ab**2) + (2.0 / 3.0) * K**2 - 2.0 * Theta * K) - Zr_up * dalpha - alpha_reg * kappa1 * (2.0 + kappa2) * Theta
-    dt_Aa = beta * dAa - (DrDr_alpha - (1.0 / 3.0) * D2_alpha) + alpha_reg * ((chi_sq / a_reg) * R_rr - (1.0 / 3.0) * Ricci) + alpha_reg * (2.0 * Dr_Zr - (2.0 / 3.0) * Dm_Zm) + alpha_reg * Aa * (K - 2.0 * Theta)
-    
-    t1 = beta * dLambda - Lambda * dbeta + (1.0 / a_reg) * ddbeta + (2.0 / b_reg) * (dbeta / r - beta / r**2)
-    t2 = (1.0 / 3.0) * ((1.0 / a_reg) * d_div_beta + 2.0 * Lambda * div_beta)
-    t3 = - (2.0 / a_reg) * (Aa * dalpha + alpha_reg * dAa)
-    t4 = 2.0 * alpha_reg * (Aa * Lambda - (2.0 / (r * b_reg)) * (Aa - Ab))
-    t5 = (2.0 * alpha_reg / a_reg) * (dAa - (2.0 / 3.0) * dK - 3.0 * Aa * dchi_chi + (Aa - Ab) * (2.0 / r + db / b_reg))
-    t6 = (2.0 / a_reg) * (alpha_reg * dTheta - Theta * dalpha - (2.0 / 3.0) * alpha_reg * K * Zr)
-    t7 = (2.0 / a_reg) * ((2.0 / 3.0) * Zr * div_beta - Zr * dbeta) - (2.0 / a_reg) * kappa1 * Zr
-    dt_Lambda = t1 + t2 + t3 + t4 + t5 + t6 + t7                                      
+print("A carregar as matrizes de alta precisão do Maple...")
 
-    # === A FÍSICA DO LAPSO ===
-    dt_alpha = - 2.0 * alpha * (K - 2.0 * Theta)
-    
-    # === A FÍSICA DO SHIFT ===
-    dt_beta = B_shift
-    eta_local = eta_param * (5.0 / (r + 5.0))
-    dt_B = 0.75 * dt_Lambda - eta_local * B_shift
+rcol = L0 * carregar_arquivo('rcol').flatten()
+rqcol = L0 * carregar_arquivo('rqcol').flatten()
+wcolq = carregar_arquivo('Wcolq').flatten()
 
-    return np.array([np.dot(dt_a, inv_psi), np.dot(dt_b, inv_psi), np.dot(dt_chi, inv_psi), np.dot(dt_K, inv_psi), np.dot(dt_Aa, inv_psi), np.dot(dt_Theta, inv_psi), np.dot(dt_Lambda, inv_psi), np.dot(dt_alpha, inv_psi), np.dot(dt_beta, inv_psi), np.dot(dt_B, inv_psi)])
+AlphaAl = carregar_arquivo('AlphaAl')
+# Usamos a inversa exata calculada com 220 casas pelo Maple!
+Alalpha = carregar_arquivo('Alalpha') 
+Faa = np.copy(Alalpha)
 
+DralphaAl = (1.0 / L0) * carregar_arquivo('DralphaAl')
+DrralphaAl = (1.0 / L0**2) * carregar_arquivo('DrralphaAl')
+DraFa = DralphaAl
+DrraFa = DrralphaAl
+
+ChiqC = carregar_arquivo('PhiqA')
+DrchiqC = (1.0 / L0) * carregar_arquivo('DrphiqA')
+DrrchiqC = (1.0 / L0**2) * carregar_arquivo('DrrphiqA')
+
+# Filtro Exponencial
+eta1_vec = np.arange(1, p + 2) / (p + 1)
+filter1 = np.exp(-36.0 * (eta1_vec**20))
 
 # =========================================================================
-# 4. INTEGRADOR RK4 E CAPTURA DOS VÍNCULOS FÍSICOS (H e M^r)
+# CONDIÇÕES INICIAIS
 # =========================================================================
-def passo_rk4(s, h, k1, k2, eta, b):
-    k_1 = calcular_taxas_fccz4(s, k1, k2, eta, b)
-    k_2 = calcular_taxas_fccz4(s + 0.5*h*k_1, k1, k2, eta, b)
-    k_3 = calcular_taxas_fccz4(s + 0.5*h*k_2, k1, k2, eta, b)
-    k_4 = calcular_taxas_fccz4(s + h*k_3, k1, k2, eta, b)
-    return s + (h/6.0) * (k_1 + 2*k_2 + 2*k_3 + k_4)
+alpha = (1.0 + 1.0 / (2.0 * rcol))**(-2)
+K = np.zeros(p + 1)
+chi = (1.0 + 1.0 / (2.0 * rcol))**(-nc)
+a = np.ones(p + 1)
+b = np.ones(p + 1)
+Delta = np.zeros(p + 1)
+Aa = np.zeros(p + 1)
+beta = np.zeros(p + 1)
+B = np.zeros(p + 1)
+Z = np.zeros(p + 1)
+Theta = np.zeros(p + 1)
 
-def calcular_erros_l2_fisicos(L0, N, tf, h, passos_salvar=1000):
-    b = configurar_base_unica(L0, N)
-    s = criar_condicoes_iniciais_fccz4(b)
-    
-    # Parâmetros Oficiais de Alcubierre
-    k1, k2, eta_param = 2.0, 0.0, 6.5
-    
-    r_grid = b['r']
-    psi_mat = b['psi']
-    rpsi_mat = b['rpsi']
-    rrpsi_mat = b['rrpsi'] 
-    
-    tempos = []
-    l2_H_list = []
-    l2_M_list = []
-    
-    passos_totais = int(tf/h)
-    print(f"Monitorando Vínculos Físicos (H e M^r) com kappa1={k1}, eta={eta_param}...")
-    
-    for i in range(passos_totais):
-        s = passo_rk4(s, h, k1, k2, eta_param, b)
-        
-        for j in range(10):
-            s[j] *= b['filtro']                      
-            
-        if i % passos_salvar == 0 or i == passos_totais - 1:
-            
-            # Reconstrói variáveis
-            a_at = 1.0 + np.dot(s[0], psi_mat)
-            b_at = 1.0 + np.dot(s[1], psi_mat)
-            chi_at = 1.0 + np.dot(s[2], psi_mat)
-            K_at = np.dot(s[3], psi_mat)
-            Aa_at = np.dot(s[4], psi_mat)
-            Ab_at = -0.5 * Aa_at 
-            
-            da_at = np.dot(s[0], rpsi_mat)
-            db_at = np.dot(s[1], rpsi_mat)
-            dchi_at = np.dot(s[2], rpsi_mat)
-            dK_at = np.dot(s[3], rpsi_mat)
-            dAa_at = np.dot(s[4], rpsi_mat)
-            
-            dda_at = np.dot(s[0], rrpsi_mat)
-            ddb_at = np.dot(s[1], rrpsi_mat)
-            ddchi_at = np.dot(s[2], rrpsi_mat)
-            
-            # Regularização para a captura (igual a evolução)
-            eps_sq = 1e-24
-            a_reg = np.sqrt(a_at**2 + eps_sq)
-            b_reg = np.sqrt(b_at**2 + eps_sq)
-            chi_reg = np.sqrt(chi_at**2 + eps_sq)
-            
-            chi_sq = chi_reg**2
-            dchi_chi = dchi_at / chi_reg
-            ddchi_chi = ddchi_at / chi_reg
-            db_b = db_at / b_reg
-            
-            # =============================================================
-            # CÁLCULO EXATO DO RICCI FÍSICO
-            # =============================================================
-            bar_R_rr = - ddb_at / b_reg + (db_at**2) / (2.0 * b_reg**2) + (da_at * db_at) / (2.0 * a_reg * b_reg) + 2.0 * da_at / (r_grid * a_reg)
-            bar_R_tt = - (r_grid**2 * ddb_at) / (2.0 * a_reg) - (3.0 * r_grid * db_at) / (2.0 * a_reg) + (r_grid**2 * da_at * db_at) / (4.0 * a_reg**2) + (r_grid * da_at) / (2.0 * a_reg) + 1.0 - a_reg / b_reg
-            
-            R_rr = bar_R_rr + ddchi_chi - (da_at / (2.0 * a_reg)) * dchi_chi + 2.0 * dchi_chi * (1.0 / r_grid + db_at / (2.0 * b_reg))
-            R_tt = bar_R_tt + (r_grid**2 * b_reg / a_reg) * ddchi_chi + (r_grid**2 * b_reg / a_reg) * 2.0 * dchi_chi * (1.0 / r_grid + db_at / (2.0 * b_reg) - da_at / (4.0 * a_reg))
-            
-            R_fisico = (chi_sq / a_reg) * R_rr + 2.0 * (chi_sq / (r_grid**2 * b_reg)) * R_tt
-            
-            # =============================================================
-            # OS VÍNCULOS FÍSICOS
-            # =============================================================
-            M_r = dAa_at - (2.0/3.0)*dK_at - 3.0*Aa_at*dchi_chi + (Aa_at - Ab_at)*(2.0/r_grid + db_b)
-            H_const = R_fisico - (Aa_at**2 + 2.0*Ab_at**2) + (2.0/3.0)*K_at**2
-            
-            # Cria uma máscara para medir o erro APENAS fora do buraco negro (r > 1.0M)
-            # O horizonte do moving puncture costuma ficar perto de r = 0.5 a 1.0
-            mascara = r_grid > 1.0
-            
-            # Norma L2 apenas no espaço exterior
-            l2_H = np.sqrt(np.mean(H_const[mascara]**2))
-            l2_M = np.sqrt(np.mean(M_r[mascara]**2))
-            
-            tempos.append(i * h)
-            l2_H_list.append(l2_H)
-            l2_M_list.append(l2_M)
-            
-            if i % (passos_salvar * 10) == 0:
-                print(f"Tempo: {i*h:.2f}M | L2(H): {l2_H:.2e} | L2(M_r): {l2_M:.2e}")
-            
-        if np.isnan(s).any() or np.max(np.abs(s)) > 1e11:
-            print(f"\nCrash numérico em t={i*h:.4f}M.")
-            break
-            
-    return tempos, l2_H_list, l2_M_list
+# Listas para guardar a animação do vídeo
+frames_alpha = []
+frames_beta = []
+frames_tempo = []
 
 # =========================================================================
-# 5. GERADOR DO GRÁFICO DE DIAGNÓSTICO (ESCALA LOG)
+# FUNÇÃO RHS (AVALIAÇÃO DAS EQUAÇÕES DE EVOLUÇÃO E DERIVADAS)
 # =========================================================================
-tf_erros = 30.0 
-t, erro_H, erro_M = calcular_erros_l2_fisicos(L0=5.0, N=150, tf=tf_erros, h=0.00001, passos_salvar=1000)
+def evaluate_rhs(alpha_val, K_val, chi_val, a_val, b_val, Delta_val, Aa_val, beta_val, B_val, Z_val, Theta_val, aplicar_filtro=False):
+    
+    al_coef = Alalpha @ (alpha_val - 1.0)
+    dralpha = DralphaAl @ al_coef
+    drralpha = DrralphaAl @ al_coef
 
-print("\nGerando Gráfico dos Vínculos Físicos...")
+    c_coef = Alalpha @ (chi_val - 1.0)
+    if aplicar_filtro: c_coef = filter1 * c_coef
+    drchi = DralphaAl @ c_coef
+    drrchi = DrralphaAl @ c_coef
 
-plt.figure(figsize=(9, 6))
-plt.plot(t, erro_H, 'r-', linewidth=2, label=r'Norma $L2$ de $\mathcal{H}$ (Hamiltoniano)')
-plt.plot(t, erro_M, 'g-', linewidth=2, label=r'Norma $L2$ de $\mathcal{M}^r$ (Momento)')
+    be_coef = Alalpha @ beta_val
+    drbeta = DralphaAl @ be_coef
+    drrbeta = DrralphaAl @ be_coef
 
-plt.yscale('log') 
-plt.title(f"Violação dos Vínculos Físicos - fCCZ4 Estabilizado (t={tf_erros}M)", fontsize=14, fontweight='bold')
-plt.xlabel("Tempo de Evolução (M)", fontsize=12)
-plt.ylabel("Norma L2 (Escala Log)", fontsize=12)
+    fa_coef = Faa @ (a_val - 1.0)
+    dra = DraFa @ fa_coef
+    drra = DrraFa @ fa_coef
 
-plt.grid(True, which="major", ls="-", color='gray', alpha=0.5)
-plt.grid(True, which="minor", ls="--", color='gray', alpha=0.2)
-plt.legend(fontsize=12)
+    fb_coef = Faa @ (b_val - 1.0)
+    drb = DraFa @ fb_coef
+    drrb = DrraFa @ fb_coef
 
-plt.tight_layout()
+    cK_coef = Alalpha @ K_val
+    if aplicar_filtro: cK_coef = filter1 * cK_coef
+    drK = DralphaAl @ cK_coef
+
+    f_coef = Alalpha @ Aa_val
+    drAa = DralphaAl @ f_coef
+
+    Del_coef = Alalpha @ Delta_val
+    drDelta = DralphaAl @ Del_coef
+
+    ze_coef = Alalpha @ Z_val
+    drZ = DralphaAl @ ze_coef
+
+    th_coef = Alalpha @ Theta_val
+    drTheta = DralphaAl @ th_coef
+
+    dalpha_dt = -2.0 * alpha_val * K_val
+    Divbeta = drbeta + beta_val * (0.5 * dra / a_val + drb / b_val) + 2.0 * beta_val / rcol
+    dchi_dt = beta_val * drchi - (nc / 6.0) * chi_val * Divbeta + (nc / 6.0) * alpha_val * K_val * chi_val
+    da_dt = beta_val * dra + 2.0 * a_val * drbeta - 2.0 * a_val * Divbeta / 3.0 - 2.0 * alpha_val * a_val * Aa_val
+    db_dt = beta_val * drb + 2.0 * b_val * beta_val / rcol - 2.0 * b_val * Divbeta / 3.0 + alpha_val * b_val * Aa_val
+
+    Zc = chi_val**(4.0 / nc) * Z_val / a_val
+    divZ = chi_val**(4.0 / nc) * drZ / a_val + (-0.5 * dra / a_val + drb / b_val + 2.0 / rcol - (2.0 / nc) * drchi / chi_val) * Zc
+    Lapalpha = chi_val**(4.0 / nc) / a_val * (drralpha - dralpha * (0.5 * dra / a_val + (2.0 / nc) * drchi / chi_val - drb / b_val - 2.0 / rcol))
+
+    dK_dt = beta_val * drK - Lapalpha + (1.0 / 3.0) * alpha_val * K_val**2 + 1.5 * alpha_val * Aa_val**2 - 2.0 * alpha_val * K_val * Theta_val \
+            - 3.0 * k1 * (1.0 + k2) * alpha_val * Theta_val + 2.0 * alpha_val * divZ
+
+    TrLapalpha = (1.0 / 3.0) * chi_val**(4.0 / nc) / a_val * (2.0 * drralpha - dralpha * (-(8.0 / nc) * drchi / chi_val + dra / a_val + drb / b_val) - 2.0 * dralpha / rcol)
+
+    TrRicci = chi_val**(4.0 / nc) / a_val * (
+        (2.0 / 3.0) * a_val * drDelta - (2.0 / 3.0 / nc) * (2.0 / rcol + drb / b_val + dra / a_val) * drchi / chi_val
+        - (1.0 / 3.0) * drra / a_val + (4.0 / 3.0 / nc) * drrchi / chi_val + (4.0 / 3.0 / nc**2) * (2.0 - nc) * drchi**2 / chi_val**2
+        + (2.0 / rcol**2) * (1.0 - a_val / b_val) * (-1.0 / 3.0 - rcol * drb / b_val) + 0.5 * dra * Delta_val + (5.0 / 12.0) * dra**2 / a_val**2
+        - dra / b_val / rcol - (1.0 / 3.0) * drb**2 / b_val**2 + (1.0 / 3.0) * drrb / b_val
+        + (2.0 / 3.0) * drb / b_val / rcol * (3.0 - a_val / b_val)
+    )
+
+    dAa_dt = beta_val * drAa - TrLapalpha + alpha_val * TrRicci + alpha_val * K_val * Aa_val - 2.0 * alpha_val * Theta_val * Aa_val \
+             + 2.0 * alpha_val * (chi_val**(4.0 / nc) * drZ / a_val - (0.5 * dra / a_val - (2.0 / nc) * drchi / chi_val) * Zc - (1.0 / 3.0) * divZ)
+
+    drDivbeta = drrbeta + drbeta * (0.5 * dra / a_val + drb / b_val) + beta_val * (0.5 * drra / a_val - 0.5 * dra**2 / a_val**2 + drrb / b_val - drb**2 / b_val**2) + 2.0 * (drbeta - beta_val / rcol) / rcol
+
+    dDelta_dt = beta_val * drDelta - Delta_val * drbeta + drrbeta / a_val + 2.0 * (drbeta - beta_val / rcol) / (b_val * rcol) + (2.0 / 3.0) * Delta_val * Divbeta \
+                + (1.0 / 3.0) * drDivbeta / a_val - (2.0 / a_val) * (Aa_val * dralpha + alpha_val * drAa) + 2.0 * alpha_val * (Aa_val * Delta_val - 3.0 * Aa_val / b_val / rcol) \
+                + xi * alpha_val / a_val * (-(6.0 / nc) * Aa_val * drchi / chi_val - (2.0 / 3.0) * drK + drAa + 1.5 * (2.0 / rcol + drb / b_val) * Aa_val)
+
+    R = -(1.0 / a_val) * (chi_val**(4.0 / nc)) * (
+        0.5 * drra / a_val + drrb / b_val + 0.5 * drb**2 / b_val**2 - a_val * drDelta - dra**2 / a_val**2
+        - (8.0 / nc) * drrchi / chi_val + 8.0 * (1.0 + nc) / nc**2 * drchi**2 / chi_val**2
+        + 4.0 / rcol**2 * (1.0 - a_val / b_val) + 2.0 / rcol * (3.0 - a_val / b_val) * drb / b_val
+        + (8.0 / nc) * drchi / chi_val * (-2.0 / rcol - drb / b_val + 0.5 * dra / a_val)
+    )
+
+    Hc = R + (2.0 / 3.0) * K_val**2 - 1.5 * Aa_val**2
+    dTheta_dt = beta_val * drTheta + 0.5 * alpha_val * Hc - alpha_val * K_val * Theta_val - Zc * dralpha + alpha_val * divZ - k1 * (k2 + 2.0) * alpha_val * Theta_val
+    Mc = -(2.0 / 3.0) * drK + drAa - (6.0 / nc) * Aa_val * drchi / chi_val + 1.5 * Aa_val * (2.0 / rcol + drb / b_val)
+    dZ_dt = beta_val * drZ + Z_val * drbeta + alpha_val * Mc - 2.0 * alpha_val * Z_val * Aa_val - (2.0 / 3.0) * alpha_val * K_val * Z_val + alpha_val * drTheta - Theta_val * dralpha - k1 * alpha_val * Z_val
+    dbeta_dt = f0 * B_val
+    dB_dt = dDelta_dt - eta0 * B_val
+
+    return (dalpha_dt, dK_dt, dchi_dt, da_dt, db_dt, dDelta_dt, dAa_dt, dbeta_dt, dB_dt, dTheta_dt, dZ_dt, 
+            al_coef, c_coef, be_coef, cK_coef, f_coef, fa_coef, fb_coef, Del_coef)
+
+# =========================================================================
+# LOOP PRINCIPAL DO RK4
+# =========================================================================
+print("Calculando o avanço no tempo...")
+while t < tf:
+    
+    da1, dK1, dc1, daa1, db1, dD1, dAa1, dbe1, dB1, dTh1, dZ1, \
+    al_c1, c_c1, be_c1, cK_c1, f_c1, fa_c1, fb_c1, _ = evaluate_rhs(
+        alpha, K, chi, a, b, Delta, Aa, beta, B, Z, Theta, aplicar_filtro=False)
+
+    da2, dK2, dc2, daa2, db2, dD2, dAa2, dbe2, dB2, dTh2, dZ2, *_ = evaluate_rhs(
+        alpha + 0.5*h*da1, K + 0.5*h*dK1, chi + 0.5*h*dc1, a + 0.5*h*daa1, b + 0.5*h*db1, 
+        Delta + 0.5*h*dD1, Aa + 0.5*h*dAa1, beta + 0.5*h*dbe1, B + 0.5*h*dB1, 
+        Z + 0.5*h*dZ1, Theta + 0.5*h*dTh1, aplicar_filtro=False)
+
+    da3, dK3, dc3, daa3, db3, dD3, dAa3, dbe3, dB3, dTh3, dZ3, *_ = evaluate_rhs(
+        alpha + 0.5*h*da2, K + 0.5*h*dK2, chi + 0.5*h*dc2, a + 0.5*h*daa2, b + 0.5*h*db2, 
+        Delta + 0.5*h*dD2, Aa + 0.5*h*dAa2, beta + 0.5*h*dbe2, B + 0.5*h*dB2, 
+        Z + 0.5*h*dZ2, Theta + 0.5*h*dTh2, aplicar_filtro=False)
+
+    da4, dK4, dc4, daa4, db4, dD4, dAa4, dbe4, dB4, dTh4, dZ4, *_ = evaluate_rhs(
+        alpha + h*da3, K + h*dK3, chi + h*dc3, a + h*daa3, b + h*db3, 
+        Delta + h*dD3, Aa + h*dAa3, beta + h*dbe3, B + h*dB3, 
+        Z + h*dZ3, Theta + h*dTh3, aplicar_filtro=True)
+
+    alpha += (h / 6.0) * (da1 + 2.0*da2 + 2.0*da3 + da4)
+    K += (h / 6.0) * (dK1 + 2.0*dK2 + 2.0*dK3 + dK4)
+    chi += (h / 6.0) * (dc1 + 2.0*dc2 + 2.0*dc3 + dc4)
+    a += (h / 6.0) * (daa1 + 2.0*daa2 + 2.0*daa3 + daa4)
+    b += (h / 6.0) * (db1 + 2.0*db2 + 2.0*db3 + db4)
+    Delta += (h / 6.0) * (dD1 + 2.0*dD2 + 2.0*dD3 + dD4)
+    Aa += (h / 6.0) * (dAa1 + 2.0*dAa2 + 2.0*dAa3 + dAa4)
+    beta += (h / 6.0) * (dbe1 + 2.0*dbe2 + 2.0*dbe3 + dbe4)
+    B += (h / 6.0) * (dB1 + 2.0*dB2 + 2.0*dB3 + dB4)
+    Theta += (h / 6.0) * (dTh1 + 2.0*dTh2 + 2.0*dTh3 + dTh4)
+    Z += (h / 6.0) * (dZ1 + 2.0*dZ2 + 2.0*dZ3 + dZ4)
+
+    tdid = t
+    t += h
+
+    Kq = ChiqC @ cK_c1
+    drKq = DrchiqC @ cK_c1
+    Aaq = ChiqC @ f_c1
+    drAaq = DrchiqC @ f_c1
+    aq = ChiqC @ fa_c1 + np.ones(Nq + 1)
+    draq = DrchiqC @ fa_c1
+    drraq = DrrchiqC @ fa_c1
+    bq = ChiqC @ fb_c1 + np.ones(Nq + 1)
+    drbq = DrchiqC @ fb_c1
+    drrbq = DrrchiqC @ fb_c1
+    chiq = ChiqC @ c_c1 + np.ones(Nq + 1)
+    drchiq = DrchiqC @ c_c1
+    drrchiq = DrrchiqC @ c_c1
+    Del_c1 = Alalpha @ Delta
+    drDeltaq = DrchiqC @ Del_c1
+
+    MCq = - (2.0 / 3.0) * drKq + drAaq - (6.0 / nc) * Aaq * drchiq / chiq + 1.5 * Aaq * (2.0 / rqcol + drbq / bq)
+    L2MC = np.sqrt(0.5 * np.dot(MCq**2, wcolq))
+
+    Rq = - (1.0 / aq) * (chiq**(4.0 / nc)) * (
+        0.5 * drraq / aq + drrbq / bq + 0.5 * drbq**2 / bq**2 - aq * drDeltaq - draq**2 / aq**2
+        - (8.0 / nc) * drrchiq / chiq + 8.0 * (1.0 + nc) / nc**2 * drchiq**2 / chiq**2
+        + 4.0 / rqcol**2 * (1.0 - aq / bq) + 2.0 / rqcol * (3.0 - aq / bq) * drbq / bq
+        + (8.0 / nc) * drchiq / chiq * (-2.0 / rqcol - drbq / bq + 0.5 * draq / aq)
+    )
+
+    HCq = Rq - 1.5 * Aaq**2 + (2.0 / 3.0) * Kq**2
+    L2HC = np.sqrt(0.5 * np.dot(HCq**2, wcolq))
+
+    with open('ErrorL2HC.txt', 'a') as f_out:
+        f_out.write(f"{t:18.16f} {L2HC:17.16f}\n")
+
+    with open('ErrorL2MC.txt', 'a') as f_out:
+        f_out.write(f"{t:18.16f} {L2MC:17.16f}\n")
+
+    # Captura de frames para a Animação
+    if niter % idump == 0:
+        frames_alpha.append(alpha.copy())
+        frames_beta.append(beta.copy())
+        frames_tempo.append(tdid)
+        print(f"Evolução: {tdid:.2f} M / {tf} M concluídos...")
+
+    if io == 1:
+        if (t > t2) and (niter % idump == 0):
+            def write_mode(filename, array_data):
+                with open(filename, 'a') as f_out:
+                    f_out.write(f"{tdid:18.16f}\t")
+                    f_out.write("\t".join([f"{val:18.16f}" for val in array_data]))
+                    f_out.write("\n")
+
+            write_mode('al.txt', al_c1)
+            write_mode('c.txt', c_c1)
+            write_mode('be.txt', be_c1)
+            write_mode('cK.txt', cK_c1)
+            write_mode('f.txt', f_c1)
+            write_mode('fa.txt', fa_c1)
+            write_mode('fb.txt', fb_c1)
+
+    niter += 1
+
+print(f"Tempo total de cálculo: {time.time() - t_start:.1f} segundos.")
+
+# =========================================================================
+# GRÁFICO FINAL DO ERRO L2 (COMO NO MATLAB)
+# =========================================================================
+try:
+    dados_L2HC = np.loadtxt('ErrorL2HC.txt')
+    x = dados_L2HC[:, 0]
+    y = np.log10(dados_L2HC[:, 1])
+
+    plt.figure(figsize=(8, 5))
+    plt.scatter(x, y, s=2, c='blue', alpha=0.5)
+    plt.grid(True, linestyle='--')
+    plt.title('Erro L2 Hamiltoniano (Vínculo Z4c)', fontweight='bold')
+    plt.xlabel('Tempo ($M$)')
+    plt.ylabel(r'$\log_{10}(L2_{HC})$')
+    plt.show() # Feche esta janela para iniciar a gravação do vídeo!
+except Exception as e:
+    print("Não foi possível gerar o gráfico L2 final.", e)
+
+# =========================================================================
+# GERAÇÃO DA ANIMAÇÃO DO BURACO NEGRO (LAPSO E SHIFT)
+# =========================================================================
+print("\nA compilar o vídeo da geometria 'Trombeta'...")
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+limite_raio = 10.0 
+
+mask = rcol <= limite_raio
+
+ax1.set_xlim(0, limite_raio)
+ax1.set_ylim(-0.05, 1.1)
+ax1.set_xlabel('Raio Isotrópico ($r/M$)', fontsize=12)
+ax1.set_ylabel(r'Fator Lapso ($\alpha$)', fontsize=12)
+ax1.grid(True, linestyle='--', alpha=0.6)
+linha_alpha, = ax1.plot([], [], 'b-', lw=2.5, label='Colapso da Métrica')
+ax1.legend(loc="lower right")
+
+ax2.set_xlim(0, limite_raio)
+ax2.set_ylim(-0.05, 0.4)
+ax2.set_xlabel('Raio Isotrópico ($r/M$)', fontsize=12)
+ax2.set_ylabel(r'Vetor Shift ($\beta^r$)', fontsize=12)
+ax2.grid(True, linestyle='--', alpha=0.6)
+linha_beta, = ax2.plot([], [], 'r-', lw=2.5, label='Arrasto Espacial')
+ax2.legend(loc="upper right")
+
+titulo = fig.suptitle('', fontsize=16, fontweight='bold')
+
+def init():
+    linha_alpha.set_data([], [])
+    linha_beta.set_data([], [])
+    return linha_alpha, linha_beta, titulo
+
+def animate(i):
+    linha_alpha.set_data(rcol[mask], frames_alpha[i][mask])
+    linha_beta.set_data(rcol[mask], frames_beta[i][mask])
+    titulo.set_text(f'Evolução do Moving Puncture Z4c | Tempo = {frames_tempo[i]:.2f} M')
+    return linha_alpha, linha_beta, titulo
+
+ani = animation.FuncAnimation(fig, animate, frames=len(frames_tempo), init_func=init, blit=False, interval=50)
+
+try:
+    nome_arquivo = "Evolucao_Trombeta.mp4"
+    print(f"Gravando {nome_arquivo}... (Isto pode levar uns segundos)")
+    ani.save(nome_arquivo, writer='ffmpeg', fps=20, dpi=200)
+    print(f"Sucesso! Vídeo guardado como '{nome_arquivo}'.")
+except Exception as e:
+    print("Aviso: FFmpeg não detetado. A guardar como GIF animado...")
+    nome_arquivo = "Evolucao_Trombeta.gif"
+    ani.save(nome_arquivo, writer='pillow', fps=20)
+    print(f"Sucesso! GIF guardado como '{nome_arquivo}'.")
+
 plt.show()

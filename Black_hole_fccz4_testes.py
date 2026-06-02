@@ -1,348 +1,284 @@
 import numpy as np
 import time
-import math
 import os
 
 # =========================================================================
-# 1. ARQUITETURA DE DOMÍNIO (MALHA PERFEITA) E BASES DE PARIDADE
+# PREPARAÇÃO DE DIRETÓRIOS E LEITURA DE MATRIZES BASE
 # =========================================================================
-def configurar_bases_fccz4(L0, N, n1_param=5.0):
-    # Distribuição Exata de Gauss-Chebyshev (Cura o Fenômeno de Gibbs)
-    M_total = 2 * (N + 1)
-    x_full = np.cos((2 * np.arange(M_total) + 1) * np.pi / (2 * M_total))
-    x = x_full[:N+1]   # Apenas a metade positiva
-    r = L0 * x / np.sqrt(1.0 - x**2)
-    r = np.sort(r)     # Crescente do Buraco Negro para o Infinito
+pasta_atual = os.path.dirname(os.path.abspath(__file__))
+pasta_resultados = os.path.join(pasta_atual, "Resultados_Erros")
 
-    # Matrizes para Variáveis PARES e ÍMPARES
-    SB = np.zeros([N+1, N+1])
-    rSB = np.zeros([N+1, N+1])
-    rrSB = np.zeros([N+1, N+1])
+# Cria a pasta de resultados se não existir
+if not os.path.exists(pasta_resultados):
+    os.makedirs(pasta_resultados)
 
-    SB2 = np.zeros([N+1, N+1])
-    rSB2 = np.zeros([N+1, N+1])
-    rrSB2 = np.zeros([N+1, N+1])
+def carregar_arquivo(nome):
+    caminho = os.path.join(pasta_atual, nome)
+    if not os.path.exists(caminho):
+        caminho = caminho + '.txt'
+    return np.loadtxt(caminho)
 
-    theta = np.arctan(L0/r)
+print("A carregar matrizes adimensionais de alta precisão...")
+# Estas matrizes são invariantes à escala. O L0 será aplicado dentro do loop!
+base_rcol = carregar_arquivo('rcol').flatten()
+base_rqcol = carregar_arquivo('rqcol').flatten()
+wcolq = carregar_arquivo('Wcolq').flatten()
+
+AlphaAl = carregar_arquivo('AlphaAl')
+Alalpha = carregar_arquivo('Alalpha') 
+Faa = np.copy(Alalpha)
+
+base_DralphaAl = carregar_arquivo('DralphaAl')
+base_DrralphaAl = carregar_arquivo('DrralphaAl')
+
+ChiqC = carregar_arquivo('PhiqA')
+base_DrchiqC = carregar_arquivo('DrphiqA')
+base_DrrchiqC = carregar_arquivo('DrrphiqA')
+
+p = 200
+Nq = int((3.0 / 2.0) * p)
+eta1_vec = np.arange(1, p + 2) / (p + 1)
+filter1 = np.exp(-36.0 * (eta1_vec**20))
+
+# =========================================================================
+# O MOTOR DE SIMULAÇÃO (ENCAPSULADO PARA O LOOP)
+# =========================================================================
+def executar_simulacao(L0, k1, tf=40.0, h=0.0002, idump=500):
+    print(f"\n---> Iniciando Simulação | L0 = {L0} | kappa_1 = {k1} <---")
+    t_inicio_sim = time.time()
     
-    for i in range(N+1):
-        # BASE PAR (k = 2i+1)
-        k_odd = 2*i + 1
-        SB[i, :] = np.sin(k_odd * theta)
-        rSB[i, :] = -np.cos(k_odd * theta) * k_odd * L0 / (r**2 * (1.0 + L0**2 / r**2))
-        rrSB[i, :] = (-np.sin(k_odd * theta) * k_odd**2 * L0**2 / (r**4 * (1.0 + L0**2 / r**2)**2) 
-                      + 2.0 * np.cos(k_odd * theta) * k_odd * L0 / (r**3 * (1.0 + L0**2 / r**2)) 
-                      - 2.0 * np.cos(k_odd * theta) * k_odd * L0**3 / (r**5 * (1.0 + L0**2 / r**2)**2))
+    # 1. Aplicação da escala L0 nas matrizes locais
+    rcol = L0 * base_rcol
+    rqcol = L0 * base_rqcol
+    DralphaAl = (1.0 / L0) * base_DralphaAl
+    DrralphaAl = (1.0 / L0**2) * base_DrralphaAl
+    DraFa = DralphaAl
+    DrraFa = DrralphaAl
+    DrchiqC = (1.0 / L0) * base_DrchiqC
+    DrrchiqC = (1.0 / L0**2) * base_DrrchiqC
 
-        # BASE ÍMPAR (k = 2i+2)
-        k_even = 2*i + 2
-        SB2[i, :] = np.sin(k_even * theta)
-        rSB2[i, :] = -np.cos(k_even * theta) * k_even * L0 / (r**2 * (1.0 + L0**2 / r**2))
-        rrSB2[i, :] = (-np.sin(k_even * theta) * k_even**2 * L0**2 / (r**4 * (1.0 + L0**2 / r**2)**2) 
-                       + 2.0 * np.cos(k_even * theta) * k_even * L0 / (r**3 * (1.0 + L0**2 / r**2)) 
-                       - 2.0 * np.cos(k_even * theta) * k_even * L0**3 / (r**5 * (1.0 + L0**2 / r**2)**2))
+    # Constantes Físicas do BSSN/Z4c
+    xi, eta0, f0, nc, k2 = 2.0, 2.0, 3.0/4.0, 2.0, 0.0
 
-    # Inversas
-    inv_psi = np.linalg.pinv(SB)
-    inv_psi2 = np.linalg.pinv(SB2)
+    # Condições Iniciais (dependentes do novo rcol)
+    alpha = (1.0 + 1.0 / (2.0 * rcol))**(-2)
+    K = np.zeros(p + 1)
+    chi = (1.0 + 1.0 / (2.0 * rcol))**(-nc)
+    a = np.ones(p + 1)
+    b = np.ones(p + 1)
+    Delta = np.zeros(p + 1)
+    Aa = np.zeros(p + 1)
+    beta = np.zeros(p + 1)
+    B = np.zeros(p + 1)
+    Z = np.zeros(p + 1)
+    Theta = np.zeros(p + 1)
 
-    # Filtro Erfc
-    erfc_vec = np.vectorize(math.erfc)
-    eta1 = np.arange(1, N + 2) / (N + 1)
-    n1 = n1_param
-    u = eta1 - 0.5
-    u_sq = u**2
-    arg = np.clip(1.0 - 4.0 * u_sq, 1e-14, 1.0)
-    denom = np.clip(4.0 * u_sq, 1e-14, 1.0)
-    sqrt_term = np.sqrt(-np.log(arg) / denom)
-    sqrt_term[np.abs(u) < 1e-8] = 1.0
-    filtro_erfc = 0.5 * erfc_vec(2.0 * np.sqrt(n1) * u * sqrt_term)
+    # 2. Definição do RHS
+    def evaluate_rhs(alpha_val, K_val, chi_val, a_val, b_val, Delta_val, Aa_val, beta_val, B_val, Z_val, Theta_val, aplicar_filtro=False):
+        al_coef = Alalpha @ (alpha_val - 1.0)
+        dralpha = DralphaAl @ al_coef
+        drralpha = DrralphaAl @ al_coef
 
-    return {
-        'r': r, 'N': N, 'filtro': filtro_erfc,
-        'psi': SB, 'rpsi': rSB, 'rrpsi': rrSB, 'inv_psi': inv_psi,
-        'psi2': SB2, 'rpsi2': rSB2, 'rrpsi2': rrSB2, 'inv_psi2': inv_psi2
-    }
+        c_coef = Alalpha @ (chi_val - 1.0)
+        if aplicar_filtro: c_coef = filter1 * c_coef
+        drchi = DralphaAl @ c_coef
+        drrchi = DrralphaAl @ c_coef
 
-# =========================================================================
-# 2. CONDIÇÕES INICIAIS
-# =========================================================================
-def criar_condicoes_iniciais_fccz4(b, M=1.0):
-    r = b['r']
-    psi_bh = 1.0 + M / (2.0 * r)
-    chi_0 = psi_bh**(-2)
-    alpha_0 = psi_bh**(-2)
-    zeros = np.zeros_like(r)
-    
-    inv_psi = b['inv_psi']
-    inv_psi2 = b['inv_psi2']
+        be_coef = Alalpha @ beta_val
+        drbeta = DralphaAl @ be_coef
+        drrbeta = DrralphaAl @ be_coef
 
-    return np.array([
-        np.dot(zeros, inv_psi),          # c_a
-        np.dot(zeros, inv_psi),          # c_b
-        np.dot(chi_0 - 1.0, inv_psi),    # c_chi
-        np.dot(zeros, inv_psi),          # c_K
-        np.dot(zeros, inv_psi),          # c_Aa
-        np.dot(zeros, inv_psi),          # c_Theta
-        np.dot(zeros, inv_psi2),         # c_Lambda (ÍMPAR)
-        np.dot(alpha_0 - 1.0, inv_psi),  # c_alpha
-        np.dot(zeros, inv_psi2),         # c_beta (ÍMPAR)
-        np.dot(zeros, inv_psi2)          # c_B (ÍMPAR)
-    ])
+        fa_coef = Faa @ (a_val - 1.0)
+        dra = DraFa @ fa_coef
+        drra = DrraFa @ fa_coef
 
-# =========================================================================
-# 3. EVOLUÇÃO fCCZ4 
-# =========================================================================
-def calcular_taxas_fccz4(state, kappa1, kappa2, eta_param, b):
-    c_a, c_b, c_chi = state[0], state[1], state[2]
-    c_K, c_Aa, c_Theta = state[3], state[4], state[5]
-    c_Lambda, c_alpha, c_beta, c_B = state[6], state[7], state[8], state[9]
+        fb_coef = Faa @ (b_val - 1.0)
+        drb = DraFa @ fb_coef
+        drrb = DrraFa @ fb_coef
 
-    psi, rpsi, rrpsi, inv_psi = b['psi'], b['rpsi'], b['rrpsi'], b['inv_psi']
-    psi2, rpsi2, rrpsi2, inv_psi2 = b['psi2'], b['rpsi2'], b['rrpsi2'], b['inv_psi2']
-    r = b['r']
+        cK_coef = Alalpha @ K_val
+        if aplicar_filtro: cK_coef = filter1 * cK_coef
+        drK = DralphaAl @ cK_coef
 
-    # RECONSTRUÇÃO
-    a = 1.0 + np.dot(c_a, psi); da = np.dot(c_a, rpsi); dda = np.dot(c_a, rrpsi)
-    b_met = 1.0 + np.dot(c_b, psi); db = np.dot(c_b, rpsi); ddb = np.dot(c_b, rrpsi)
-    alpha = 1.0 + np.dot(c_alpha, psi); dalpha = np.dot(c_alpha, rpsi); ddalpha = np.dot(c_alpha, rrpsi)
-    chi = 1.0 + np.dot(c_chi, psi); dchi = np.dot(c_chi, rpsi); ddchi = np.dot(c_chi, rrpsi)
-    K = np.dot(c_K, psi); dK = np.dot(c_K, rpsi)
-    Aa = np.dot(c_Aa, psi); dAa = np.dot(c_Aa, rpsi)
-    Theta = np.dot(c_Theta, psi); dTheta = np.dot(c_Theta, rpsi)
+        f_coef = Alalpha @ Aa_val
+        drAa = DralphaAl @ f_coef
+        Del_coef = Alalpha @ Delta_val
+        drDelta = DralphaAl @ Del_coef
+        ze_coef = Alalpha @ Z_val
+        drZ = DralphaAl @ ze_coef
+        th_coef = Alalpha @ Theta_val
+        drTheta = DralphaAl @ th_coef
 
-    beta = np.dot(c_beta, psi2); dbeta = np.dot(c_beta, rpsi2); ddbeta = np.dot(c_beta, rrpsi2)
-    Lambda = np.dot(c_Lambda, psi2); dLambda = np.dot(c_Lambda, rpsi2)
-    B_shift = np.dot(c_B, psi2); dB_shift = np.dot(c_B, rpsi2)
+        dalpha_dt = -2.0 * alpha_val * K_val
+        Divbeta = drbeta + beta_val * (0.5 * dra / a_val + drb / b_val) + 2.0 * beta_val / rcol
+        dchi_dt = beta_val * drchi - (nc / 6.0) * chi_val * Divbeta + (nc / 6.0) * alpha_val * K_val * chi_val
+        da_dt = beta_val * dra + 2.0 * a_val * drbeta - 2.0 * a_val * Divbeta / 3.0 - 2.0 * alpha_val * a_val * Aa_val
+        db_dt = beta_val * drb + 2.0 * b_val * beta_val / rcol - 2.0 * b_val * Divbeta / 3.0 + alpha_val * b_val * Aa_val
 
-    # Regularização
-    eps_sq = 1e-24
-    chi_reg = np.sqrt(chi**2 + eps_sq)
-    a_reg = np.sqrt(a**2 + eps_sq)
-    b_reg = np.sqrt(b_met**2 + eps_sq)
-    alpha_reg = np.sqrt(alpha**2 + eps_sq)
-    chi_sq = chi_reg**2
-    dchi_chi = dchi / chi_reg
-    ddchi_chi = ddchi / chi_reg
-    Ab = - (b_reg / (2.0 * a_reg)) * Aa
+        Zc = chi_val**(4.0 / nc) * Z_val / a_val
+        divZ = chi_val**(4.0 / nc) * drZ / a_val + (-0.5 * dra / a_val + drb / b_val + 2.0 / rcol - (2.0 / nc) * drchi / chi_val) * Zc
+        Lapalpha = chi_val**(4.0 / nc) / a_val * (drralpha - dralpha * (0.5 * dra / a_val + (2.0 / nc) * drchi / chi_val - drb / b_val - 2.0 / rcol))
 
-    div_beta = dbeta + beta * (db / b_reg + da / (2.0 * a_reg) + 2.0 / r)
-    d_div_beta = ddbeta + dbeta * (db / b_reg + da / (2.0 * a_reg) + 2.0 / r) + beta * ((ddb * b_reg - db**2) / (b_reg**2) + (dda * a_reg - da**2) / (2.0 * a_reg**2) - 2.0 / (r**2))
+        dK_dt = beta_val * drK - Lapalpha + (1.0 / 3.0) * alpha_val * K_val**2 + 1.5 * alpha_val * Aa_val**2 - 2.0 * alpha_val * K_val * Theta_val \
+                - 3.0 * k1 * (1.0 + k2) * alpha_val * Theta_val + 2.0 * alpha_val * divZ
 
-    kappa1_local = kappa1 
-    kappa2 = 0
+        TrLapalpha = (1.0 / 3.0) * chi_val**(4.0 / nc) / a_val * (2.0 * drralpha - dralpha * (-(8.0 / nc) * drchi / chi_val + dra / a_val + drb / b_val) - 2.0 * dralpha / rcol)
 
-    bar_Lambda = (1.0 / a_reg) * (da / (2.0 * a_reg) - db / b_reg - (2.0 / r) * (1.0 - a_reg / b_reg))
-    Zr = (a_reg / 2.0) * (Lambda - bar_Lambda)
-    Zr_up = Zr / a_reg
+        TrRicci = chi_val**(4.0 / nc) / a_val * (
+            (2.0 / 3.0) * a_val * drDelta - (2.0 / 3.0 / nc) * (2.0 / rcol + drb / b_val + dra / a_val) * drchi / chi_val
+            - (1.0 / 3.0) * drra / a_val + (4.0 / 3.0 / nc) * drrchi / chi_val + (4.0 / 3.0 / nc**2) * (2.0 - nc) * drchi**2 / chi_val**2
+            + (2.0 / rcol**2) * (1.0 - a_val / b_val) * (-1.0 / 3.0 - rcol * drb / b_val) + 0.5 * dra * Delta_val + (5.0 / 12.0) * dra**2 / a_val**2
+            - dra / b_val / rcol - (1.0 / 3.0) * drb**2 / b_val**2 + (1.0 / 3.0) * drrb / b_val
+            + (2.0 / 3.0) * drb / b_val / rcol * (3.0 - a_val / b_val)
+        )
 
-    term1 = 0.5 * (da * Lambda + a_reg * dLambda)
-    term2 = -0.25 * (dda / a_reg - (da**2) / (a_reg**2))
-    term3 = 0.5 * (ddb / b_reg - (db**2) / (b_reg**2))
-    term4 = -1.0 / (r**2)
-    term5 = - (da / (r * b_reg) - a_reg / (r**2 * b_reg) - (a_reg * db) / (r * b_reg**2))
-    dZr = term1 + term2 + term3 + term4 + term5
-    dZr_up = (1.0 / a_reg) * dZr - (Zr / a_reg**2) * da
+        dAa_dt = beta_val * drAa - TrLapalpha + alpha_val * TrRicci + alpha_val * K_val * Aa_val - 2.0 * alpha_val * Theta_val * Aa_val \
+                 + 2.0 * alpha_val * (chi_val**(4.0 / nc) * drZ / a_val - (0.5 * dra / a_val - (2.0 / nc) * drchi / chi_val) * Zc - (1.0 / 3.0) * divZ)
 
-    Dm_Zm = dZr_up + Zr_up * (da / (2.0 * a_reg) + db / b_reg + 2.0 / r - 3.0 * dchi_chi)
-    Dr_Zr = dZr_up + Zr_up * (da / (2.0 * a_reg) - 1.0 * dchi_chi)
+        drDivbeta = drrbeta + drbeta * (0.5 * dra / a_val + drb / b_val) + beta_val * (0.5 * drra / a_val - 0.5 * dra**2 / a_val**2 + drrb / b_val - drb**2 / b_val**2) + 2.0 * (drbeta - beta_val / rcol) / rcol
 
-    bar_R_rr = - ddb / b_reg + (db**2) / (2.0 * b_reg**2) + (da * db) / (2.0 * a_reg * b_reg) + 2.0 * da / (r * a_reg)
-    bar_R_tt = - (r**2 * ddb) / (2.0 * a_reg) - (3.0 * r * db) / (2.0 * a_reg) + (r**2 * da * db) / (4.0 * a_reg**2) + (r * da) / (2.0 * a_reg) + 1.0 - a_reg / b_reg
+        dDelta_dt = beta_val * drDelta - Delta_val * drbeta + drrbeta / a_val + 2.0 * (drbeta - beta_val / rcol) / (b_val * rcol) + (2.0 / 3.0) * Delta_val * Divbeta \
+                    + (1.0 / 3.0) * drDivbeta / a_val - (2.0 / a_val) * (Aa_val * dralpha + alpha_val * drAa) + 2.0 * alpha_val * (Aa_val * Delta_val - 3.0 * Aa_val / b_val / rcol) \
+                    + xi * alpha_val / a_val * (-(6.0 / nc) * Aa_val * drchi / chi_val - (2.0 / 3.0) * drK + drAa + 1.5 * (2.0 / rcol + drb / b_val) * Aa_val)
 
-    R_rr = bar_R_rr + 2.0 * ddchi_chi + (2.0 / r + db / b_reg - da / a_reg) * dchi_chi - 3.0 * dchi_chi**2
-    R_tt = bar_R_tt + (r**2 * b_reg / a_reg) * (ddchi_chi + (3.0 / r + 1.5 * db / b_reg - 0.5 * da / a_reg) * dchi_chi - 2.0 * dchi_chi**2)
-    Ricci = (chi_sq / a_reg) * R_rr + 2.0 * (chi_sq / (r**2 * b_reg)) * R_tt
+        R = -(1.0 / a_val) * (chi_val**(4.0 / nc)) * (
+            0.5 * drra / a_val + drrb / b_val + 0.5 * drb**2 / b_val**2 - a_val * drDelta - dra**2 / a_val**2
+            - (8.0 / nc) * drrchi / chi_val + 8.0 * (1.0 + nc) / nc**2 * drchi**2 / chi_val**2
+            + 4.0 / rcol**2 * (1.0 - a_val / b_val) + 2.0 / rcol * (3.0 - a_val / b_val) * drb / b_val
+            + (8.0 / nc) * drchi / chi_val * (-2.0 / rcol - drb / b_val + 0.5 * dra / a_val)
+        )
 
-    D2_alpha = (chi_sq / a_reg) * (ddalpha + dalpha * (2.0 / r + db / b_reg - da / (2.0 * a_reg) - dchi_chi))
-    DrDr_alpha = (chi_sq / a_reg) * (ddalpha - dalpha * (da / (2.0 * a_reg) - dchi_chi))
+        Hc = R + (2.0 / 3.0) * K_val**2 - 1.5 * Aa_val**2
+        dTheta_dt = beta_val * drTheta + 0.5 * alpha_val * Hc - alpha_val * K_val * Theta_val - Zc * dralpha + alpha_val * divZ - k1 * (k2 + 2.0) * alpha_val * Theta_val
+        Mc = -(2.0 / 3.0) * drK + drAa - (6.0 / nc) * Aa_val * drchi / chi_val + 1.5 * Aa_val * (2.0 / rcol + drb / b_val)
+        dZ_dt = beta_val * drZ + Z_val * drbeta + alpha_val * Mc - 2.0 * alpha_val * Z_val * Aa_val - (2.0 / 3.0) * alpha_val * K_val * Z_val + alpha_val * drTheta - Theta_val * dralpha - k1 * alpha_val * Z_val
+        dbeta_dt = f0 * B_val
+        dB_dt = dDelta_dt - eta0 * B_val
 
-    dt_a = beta * da + 2.0 * a_reg * dbeta - (2.0 / 3.0) * a_reg * div_beta - 2.0 * alpha_reg * a_reg * Aa
-    dt_b = beta * db + 2.0 * b_reg * beta / r - (2.0 / 3.0) * b_reg * div_beta - 2.0 * alpha_reg * b_reg * Ab
-    dt_chi = beta * dchi - (1.0 / 3.0) * chi_reg * div_beta + (1.0 / 6.0) * chi_reg * alpha_reg * K
-    
-    dt_K = - D2_alpha + alpha_reg * (Ricci + 2.0 * Dm_Zm + K**2 - 2.0 * Theta * K) + beta * dK - 3.0 * alpha_reg * kappa1_local * Theta
-    dt_Theta = beta * dTheta + 0.5 * alpha_reg * (Ricci + 2.0 * Dm_Zm - (Aa**2 + 2.0 * Ab**2) + (2.0 / 3.0) * K**2 - 2.0 * Theta * K) - Zr_up * dalpha - alpha_reg * kappa1_local * 2.0 * Theta
-    dt_Aa = beta * dAa - (DrDr_alpha - (1.0 / 3.0) * D2_alpha) + alpha_reg * ((chi_sq / a_reg) * R_rr - (1.0 / 3.0) * Ricci) + alpha_reg * (2.0 * Dr_Zr - (2.0 / 3.0) * Dm_Zm) + alpha_reg * Aa * (K - 2.0 * Theta)
+        # AQUI FOI CORRIGIDO O TYPO (dalpha_dt no lugar certo!)
+        return (dalpha_dt, dK_dt, dchi_dt, da_dt, db_dt, dDelta_dt, dAa_dt, dbeta_dt, dB_dt, dTheta_dt, dZ_dt, 
+                al_coef, c_coef, be_coef, cK_coef, f_coef, fa_coef, fb_coef, Del_coef)
 
-    t1 = beta * dLambda - Lambda * dbeta + (1.0 / a_reg) * ddbeta + (2.0 / b_reg) * (dbeta / r - beta / (r**2))
-    t2 = (1.0 / 3.0) * ((1.0 / a_reg) * d_div_beta + 2.0 * Lambda * div_beta)
-    t3 = - (2.0 / a_reg) * (Aa * dalpha + alpha_reg * dAa)
-    t4 = 2.0 * alpha_reg * (Aa *Lambda - (2.0 / (r * b_reg)) * (Aa - Ab))
-    t5 = (2.0 * alpha_reg / a_reg) * (dAa - (2.0 / 3.0) * dK - 3.0 * Aa * dchi_chi + (Aa - Ab) * (2.0 / r + db / b_reg))
-    t6 = (2.0 / a_reg) * (alpha_reg * dTheta - Theta * dalpha - (2.0 / 3.0) * alpha_reg * K * Zr)
-    t7 = (2.0 / a_reg) * ((2.0 / 3.0) * Zr * div_beta - Zr * dbeta) - (2.0 / a_reg) * kappa1_local * Zr
-    dt_Lambda = t1 + t2 + t3 + t4 + t5 + t6 + t7
+    # 3. Arquivo de Output para esta iteração
+    nome_arquivo_erros = os.path.join(pasta_resultados, f"Erros_L0_{L0}_k1_{k1}.txt")
+    with open(nome_arquivo_erros, 'w') as f_out:
+        f_out.write("Tempo_M\tL2HC\tL2MC\n")
 
-    # GAUGE INTELIGENTE 
-    dt_alpha = - 2.0 * alpha * (K - 2.0 * Theta)
-    dt_beta = 0.75 * B_shift
-    eta_local = eta_param * (1.0 - chi_reg)
-    dt_B = dt_Lambda - eta_local * B_shift
+    t = 0.0
+    niter = 0
 
-    return np.array([
-        np.dot(dt_a, inv_psi),       
-        np.dot(dt_b, inv_psi),       
-        np.dot(dt_chi, inv_psi),     
-        np.dot(dt_K, inv_psi),       
-        np.dot(dt_Aa, inv_psi),      
-        np.dot(dt_Theta, inv_psi),   
-        np.dot(dt_Lambda, inv_psi2), 
-        np.dot(dt_alpha, inv_psi),   
-        np.dot(dt_beta, inv_psi2),   
-        np.dot(dt_B, inv_psi2)       
-    ])
+    # 4. Loop RK4
+    while t <= tf:
+        da1, dK1, dc1, daa1, db1, dD1, dAa1, dbe1, dB1, dTh1, dZ1, \
+        al_c1, c_c1, be_c1, cK_c1, f_c1, fa_c1, fb_c1, _ = evaluate_rhs(
+            alpha, K, chi, a, b, Delta, Aa, beta, B, Z, Theta, aplicar_filtro=False)
 
-# =========================================================================
-# 4. INTEGRADOR RK4 COM RASTREADOR DE EXTREMOS
-# =========================================================================
-def passo_rk4(s, h, k1, k2, eta, b):
-    k_1 = calcular_taxas_fccz4(s, k1, k2, eta, b)
-    k_2 = calcular_taxas_fccz4(s + 0.5*h*k_1, k1, k2, eta, b)
-    k_3 = calcular_taxas_fccz4(s + 0.5*h*k_2, k1, k2, eta, b)
-    k_4 = calcular_taxas_fccz4(s + h*k_3, k1, k2, eta, b)
-    return s + (h/6.0) * (k_1 + 2*k_2 + 2*k_3 + k_4)
+        da2, dK2, dc2, daa2, db2, dD2, dAa2, dbe2, dB2, dTh2, dZ2, *_ = evaluate_rhs(
+            alpha + 0.5*h*da1, K + 0.5*h*dK1, chi + 0.5*h*dc1, a + 0.5*h*daa1, b + 0.5*h*db1, 
+            Delta + 0.5*h*dD1, Aa + 0.5*h*dAa1, beta + 0.5*h*dbe1, B + 0.5*h*dB1, 
+            Z + 0.5*h*dZ1, Theta + 0.5*h*dTh1, aplicar_filtro=False)
 
-def simular_varredura_filtros(L0, N, tf, h, k1, eta_param, n1_param, vars_to_filter, id_teste):
-    b = configurar_bases_fccz4(L0, N, n1_param)
-    s = criar_condicoes_iniciais_fccz4(b)
-    k2 = 0.0
-    r_grid = b['r']
-    psi_mat, rpsi_mat, rrpsi_mat = b['psi'], b['rpsi'], b['rrpsi']
-    psi2_mat = b['psi2']
-    
-    passos_totais = int(tf/h)
-    passos_salvar = max(1, int(0.5/h)) 
-    
-    tempo_sobrevivido = 0.0
-    erro_H_final, erro_M_final = 0.0, 0.0
-    ult_min_b, ult_max_b, ult_min_a, ult_max_a = 0.0, 0.0, 0.0, 0.0
+        da3, dK3, dc3, daa3, db3, dD3, dAa3, dbe3, dB3, dTh3, dZ3, *_ = evaluate_rhs(
+            alpha + 0.5*h*da2, K + 0.5*h*dK2, chi + 0.5*h*dc2, a + 0.5*h*daa2, b + 0.5*h*db2, 
+            Delta + 0.5*h*dD2, Aa + 0.5*h*dAa2, beta + 0.5*h*dbe2, B + 0.5*h*dB2, 
+            Z + 0.5*h*dZ2, Theta + 0.5*h*dTh2, aplicar_filtro=False)
 
-    nome_arquivo = f"evolucao_filtro_{id_teste}_n1_{n1_param}.txt"
-    
-    with open(nome_arquivo, "w") as arquivo_dados:
-        arquivo_dados.write("Tempo_M, L2_H, L2_Mr, Min_Beta, Max_Beta, Min_Alpha, Max_Alpha\n")
+        da4, dK4, dc4, daa4, db4, dD4, dAa4, dbe4, dB4, dTh4, dZ4, *_ = evaluate_rhs(
+            alpha + h*da3, K + h*dK3, chi + h*dc3, a + h*daa3, b + h*db3, 
+            Delta + h*dD3, Aa + h*dAa3, beta + h*dbe3, B + h*dB3, 
+            Z + h*dZ3, Theta + h*dTh3, aplicar_filtro=True)
 
-        for i in range(passos_totais):
-            s = passo_rk4(s, h, k1, k2, eta_param, b)
+        alpha += (h / 6.0) * (da1 + 2.0*da2 + 2.0*da3 + da4)
+        K += (h / 6.0) * (dK1 + 2.0*dK2 + 2.0*dK3 + dK4)
+        chi += (h / 6.0) * (dc1 + 2.0*dc2 + 2.0*dc3 + dc4)
+        a += (h / 6.0) * (daa1 + 2.0*daa2 + 2.0*daa3 + daa4)
+        b += (h / 6.0) * (db1 + 2.0*db2 + 2.0*db3 + db4)
+        Delta += (h / 6.0) * (dD1 + 2.0*dD2 + 2.0*dD3 + dD4)
+        Aa += (h / 6.0) * (dAa1 + 2.0*dAa2 + 2.0*dAa3 + dAa4)
+        beta += (h / 6.0) * (dbe1 + 2.0*dbe2 + 2.0*dbe3 + dbe4)
+        B += (h / 6.0) * (dB1 + 2.0*dB2 + 2.0*dB3 + dB4)
+        Theta += (h / 6.0) * (dTh1 + 2.0*dTh2 + 2.0*dTh3 + dTh4)
+        Z += (h / 6.0) * (dZ1 + 2.0*dZ2 + 2.0*dZ3 + dZ4)
+
+        tdid = t
+        t += h
+
+        # 5. Cálculo Dinâmico e Gravação dos Erros L2 (A cada idump)
+        if niter % idump == 0:
+            Kq = ChiqC @ cK_c1
+            drKq = DrchiqC @ cK_c1
+            Aaq = ChiqC @ f_c1
+            drAaq = DrchiqC @ f_c1
+            aq = ChiqC @ fa_c1 + np.ones(Nq + 1)
+            draq = DrchiqC @ fa_c1
+            drraq = DrrchiqC @ fa_c1
+            bq = ChiqC @ fb_c1 + np.ones(Nq + 1)
+            drbq = DrchiqC @ fb_c1
+            drrbq = DrrchiqC @ fb_c1
+            chiq = ChiqC @ c_c1 + np.ones(Nq + 1)
+            drchiq = DrchiqC @ c_c1
+            drrchiq = DrrchiqC @ c_c1
+            Del_c1 = Alalpha @ Delta
+            drDeltaq = DrchiqC @ Del_c1
+
+            MCq = - (2.0 / 3.0) * drKq + drAaq - (6.0 / nc) * Aaq * drchiq / chiq + 1.5 * Aaq * (2.0 / rqcol + drbq / bq)
+            L2MC = np.sqrt(0.5 * np.dot(MCq**2, wcolq))
+
+            Rq = - (1.0 / aq) * (chiq**(4.0 / nc)) * (
+                0.5 * drraq / aq + drrbq / bq + 0.5 * drbq**2 / bq**2 - aq * drDeltaq - draq**2 / aq**2
+                - (8.0 / nc) * drrchiq / chiq + 8.0 * (1.0 + nc) / nc**2 * drchiq**2 / chiq**2
+                + 4.0 / rqcol**2 * (1.0 - aq / bq) + 2.0 / rqcol * (3.0 - aq / bq) * drbq / bq
+                + (8.0 / nc) * drchiq / chiq * (-2.0 / rqcol - drbq / bq + 0.5 * draq / aq)
+            )
+
+            HCq = Rq - 1.5 * Aaq**2 + (2.0 / 3.0) * Kq**2
+            L2HC = np.sqrt(0.5 * np.dot(HCq**2, wcolq))
+
+            with open(nome_arquivo_erros, 'a') as f_out:
+                f_out.write(f"{tdid:18.16f}\t{L2HC:17.16f}\t{L2MC:17.16f}\n")
             
-            for idx in vars_to_filter:
-                s[idx] *= b['filtro']
-            
-            tempo_atual = (i + 1) * h
-            
-            if i % passos_salvar == 0 or i == passos_totais - 1:
-                a_at = 1.0 + np.dot(s[0], psi_mat)
-                b_at = 1.0 + np.dot(s[1], psi_mat)
-                chi_at = 1.0 + np.dot(s[2], psi_mat)
-                K_at = np.dot(s[3], psi_mat)
-                Aa_at = np.dot(s[4], psi_mat)
-                Ab_at = -0.5 * Aa_at
-                
-                da_at = np.dot(s[0], rpsi_mat)
-                db_at = np.dot(s[1], rpsi_mat)
-                dchi_at = np.dot(s[2], rpsi_mat)
-                dK_at = np.dot(s[3], rpsi_mat)
-                dAa_at = np.dot(s[4], rpsi_mat)
-                ddb_at = np.dot(s[1], rrpsi_mat)
-                ddchi_at = np.dot(s[2], rrpsi_mat)
-                
-                alpha_at = 1.0 + np.dot(s[7], psi_mat)
-                beta_at = np.dot(s[8], psi2_mat)
-                
-                ult_min_b, ult_max_b = np.min(beta_at), np.max(beta_at)
-                ult_min_a, ult_max_a = np.min(alpha_at), np.max(alpha_at)
-                
-                a_reg = np.sqrt(a_at**2 + 1e-12)
-                b_reg = np.sqrt(b_at**2 + 1e-12)
-                chi_reg = np.sqrt(chi_at**2 + 1e-12)
-                chi_sq = chi_reg**2
-                
-                dchi_chi = dchi_at / chi_reg
-                ddchi_chi = ddchi_at / chi_reg
-                db_b = db_at / b_reg
-                r_reg = np.sqrt(r_grid**2 + 1e-8)
-                r_reg_sq = r_reg**2
-                
-                bar_R_rr = - ddb_at / b_reg + (db_at**2) / (2.0 * b_reg**2) + (da_at * db_at) / (2.0 * a_reg * b_reg) + 2.0 * da_at / (r_reg * a_reg)
-                bar_R_tt = - (r_reg_sq * ddb_at) / (2.0 * a_reg) - (3.0 * r_reg * db_at) / (2.0 * a_reg) + (r_reg_sq * da_at * db_at) / (4.0 * a_reg**2) + (r_reg * da_at) / (2.0 * a_reg) + 1.0 - a_reg / b_reg
-                R_rr = bar_R_rr + 2.0 * ddchi_chi + (2.0 / r_reg + db_at / b_reg - da_at / a_reg) * dchi_chi - 3.0 * dchi_chi**2
-                R_tt = bar_R_tt + (r_reg_sq * b_reg / a_reg) * (ddchi_chi + (3.0 / r_reg + 1.5 * db_at / b_reg - 0.5 * da_at / a_reg) * dchi_chi - 2.0 * dchi_chi**2)
-                R_fisico = (chi_sq / a_reg) * R_rr + 2.0 * (chi_sq / (r_reg_sq * b_reg)) * R_tt
-                
-                M_r = dAa_at - (2.0/3.0)*dK_at - 3.0*Aa_at*dchi_chi + (Aa_at - Ab_at)*(2.0/r_reg + db_b)
-                H_const = R_fisico - (Aa_at**2 + 2.0*Ab_at**2) + (2.0/3.0)*K_at**2
-                
-                mascara = r_grid > 1.0
-                r_ext = r_grid[mascara]
-                H_ext = H_const[mascara]
-                M_ext = M_r[mascara]
-                delta_R = r_ext[-1] - r_ext[0]
-                
-                integral_H2 = np.trapezoid(H_ext**2, x=r_ext)
-                integral_M2 = np.trapezoid(M_ext**2, x=r_ext)
-                erro_H_final = np.sqrt(integral_H2 / delta_R)
-                erro_M_final = np.sqrt(integral_M2 / delta_R)
-                
-                tempo_sobrevivido = tempo_atual
-                
-                if i % (passos_salvar * 10) == 0:
-                    print(f" Progresso: {tempo_sobrevivido:.2f}M | L2(H): {erro_H_final:.2e} | Beta: [{ult_min_b:.3f}, {ult_max_b:.3f}] | Alpha: [{ult_min_a:.3f}, {ult_max_a:.3f}]")
-                
-                arquivo_dados.write(f"{tempo_sobrevivido:.4f}, {erro_H_final:.8e}, {erro_M_final:.8e}, {ult_min_b:.8e}, {ult_max_b:.8e}, {ult_min_a:.8e}, {ult_max_a:.8e}\n")
-                arquivo_dados.flush()
+            print(f"   Progresso: {tdid:.1f} M / {tf} M | L2HC: {L2HC:.2e}")
 
-            if np.isnan(s).any() or np.max(np.abs(s)) > 1e11:
-                break
-                
-    return tempo_sobrevivido, erro_H_final, erro_M_final, ult_min_b, ult_max_b, ult_min_a, ult_max_a
+            # =================================================================
+            # NOVO: GATILHO DE PARAGEM DE EMERGÊNCIA (EARLY STOPPING)
+            # =================================================================
+            # Se o erro for NaN (Not a Number) ou maior que 1.0 (explosão certa)
+            if np.isnan(L2HC) or np.isnan(L2MC) or L2HC > 1.0 or L2MC > 1.0:
+                print(f"   [ALERTA] Erro divergiu em t = {tdid:.2f} M! Abortando esta combinação de parâmetros para poupar tempo.")
+                with open(nome_arquivo_erros, 'a') as f_out:
+                    f_out.write(f"# SIMULACAO ABORTADA EM t={tdid:.2f}M DEVIDO A DIVERGENCIA NUMERICA\n")
+                break # O 'break' quebra o 'while' e o código avança imediatamente para o próximo L0 e k1
 
+        niter += 1
+
+    tempo_gasto = (time.time() - t_inicio_sim) / 60.0
+    print(f"---> Concluído! Erros gravados em: {nome_arquivo_erros} ({tempo_gasto:.2f} min) <---")
 
 # =========================================================================
-# 5. GERENCIADOR DA VARREDURA DE FILTROS E CONFIGURAÇÕES
+# CONFIGURAÇÃO DA VARREDURA (PARAMETER SWEEP)
 # =========================================================================
 if __name__ == "__main__":
-    tf_alvo = 20.0
-    k1_fixo = 1.0
-    eta_fixo = 2.0 # Mantemos fixo como vc pediu para testar os filtros primeiro
+    # Coloque aqui as listas de parâmetros que quer testar!
+    lista_L0 = [5.0, 7.5, 10.0, 12.5, 15.0, 20.0]
+    lista_kappa1 = [0.05, 0.2, 0.5, 1.5, 5.0, 10.0, 15.0, 25.0]
     
-    n1_testes = [5.0, 10.0, 20.0, 50.0, 100.0, 1000.0]
+    # Parâmetros de tempo
+    tempo_final = 40.0
+    passo_rk4 = 0.0002
     
-    configs_filtros = {
-        "Cfg1_Original": [2, 3, 5, 6, 7],               
-        "Cfg2_ComBeta": [2, 3, 5, 6, 7, 8],             
-        "Cfg3_ComBetaEB": [2, 3, 5, 6, 7, 8, 9],        
-        "Cfg4_TudoMenosMetrica": [2, 3, 4, 5, 6, 7, 8, 9], 
-        "Cfg5_Agressivo": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] 
-    }
-
-    print("=" * 90)
-    print(f"INICIANDO VARREDURA COMPLETA (Malha Chebyshev, Eta Dinâmico, k1={k1_fixo}, eta={eta_fixo})")
-    print("=" * 90)
-
-    DIRETORIO_ATUAL = os.path.dirname(os.path.abspath(__file__))
-    nome_resumo = os.path.join(DIRETORIO_ATUAL, "Resumo_Varredura_Filtros_Completa.txt")
-
-    with open(nome_resumo, "w") as resumo:
-        resumo.write("Configuracao, n1, Tempo_Final, Erro_H, Erro_Mr, Min_Beta, Max_Beta, Min_Alpha, Max_Alpha\n")
-        
-        for n1_atual in n1_testes:
-            for nome_cfg, var_lista in configs_filtros.items():
-                print(f"\nTestando: {nome_cfg} | n1 = {n1_atual}")
-                
-                t_inicio = time.time()
-                t_final, err_H, err_M, min_b, max_b, min_a, max_a = simular_varredura_filtros(
-                    L0=5.0, N=150, tf=tf_alvo, h=0.0001, 
-                    k1=k1_fixo, eta_param=eta_fixo, 
-                    n1_param=n1_atual, vars_to_filter=var_lista, id_teste=nome_cfg
-                )
-                t_fim = time.time()
-                duracao = (t_fim - t_inicio)/60.0
-                
-                status = "SOBREVIVEU!" if t_final >= tf_alvo - 0.01 else "CRASH"
-                print(f"Resultado: {status} em t = {t_final:.2f}M ({duracao:.1f} min)")
-                
-                resumo.write(f"{nome_cfg}, {n1_atual}, {t_final:.4f}, {err_H:.8e}, {err_M:.8e}, {min_b:.8e}, {max_b:.8e}, {min_a:.8e}, {max_a:.8e}\n")
-                resumo.flush()
-
-    print("\nVarredura concluída! Confira os arquivos txt gerados.")
+    print("=========================================================")
+    print(" INICIANDO VARREDURA DE PARÂMETROS Z4c (MOVING PUNCTURE) ")
+    print(f" Total de combinações a testar: {len(lista_L0) * len(lista_kappa1)}")
+    print("=========================================================")
+    
+    tempo_global = time.time()
+    
+    for L0_teste in lista_L0:
+        for k1_teste in lista_kappa1:
+            executar_simulacao(L0_teste, k1_teste, tf=tempo_final, h=passo_rk4, idump=500)
+            
+    minutos_totais = (time.time() - tempo_global) / 60.0
+    print("\n=========================================================")
+    print(f" VARREDURA COMPLETA! Tempo total: {minutos_totais:.2f} minutos.")
+    print(f" Pode encontrar todos os ficheiros .txt na pasta '{pasta_resultados}'")
+    print("=========================================================")

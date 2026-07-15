@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.special import erfc
 import math
 import warnings
 
@@ -8,7 +9,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # =========================================================================
 # 0. FUNÇÃO PARA CONFIGURAR AS BASES ESPECTRAIS
 # =========================================================================
-V = 0
+V = 0.0
 
 def configurar_bases_espectrais(L0_valor, N_valor):
     col = np.cos(np.arange(2*N_valor + 4)*math.pi /(2*N_valor + 3))  
@@ -17,24 +18,23 @@ def configurar_bases_espectrais(L0_valor, N_valor):
     r1 = L0_valor * colr/(np.sqrt(1-colr**2))       
     r = np.flip(r1)
 
-    SB = np.zeros([N_valor+3,N_valor+1])
-    rSB = np.zeros([N_valor+3,N_valor+1])
-    rrSB = np.zeros([N_valor+3,N_valor+1])
+    SB = np.zeros([N_valor+3, N_valor+1])
+    rSB = np.zeros([N_valor+3, N_valor+1])
+    rrSB = np.zeros([N_valor+3, N_valor+1])
 
     for i in range(N_valor+1+1+1):
         SB[i,] = np.sin((2*i+1)*np.arctan(L0_valor/r))
         rSB[i,] = -np.cos((2*i+1)*np.arctan(L0_valor/r))*(2*i+1)*L0_valor/(r**2*(1+L0_valor**2/r**2))
         rrSB[i,] = -np.sin((2*i+1)*np.arctan(L0_valor/r))*(2*i+1)**2*L0_valor**2/(r**4*(1+L0_valor**2/r**2)**2)+2*np.cos((2*i+1)*np.arctan(L0_valor/r))*(2*i+1)*L0_valor/(r**3*(1+L0_valor**2/r**2))-2*np.cos((2*i+1)*np.arctan(L0_valor/r))*(2*i+1)*L0_valor**3/(r**5*(1+L0_valor**2/r**2)**2)
 
-    psi = SB[0:N_valor+1,:]       
-    rpsi = rSB[0:N_valor+1,:]
-    rrpsi = rrSB[0:N_valor+1,:]
-
+    psi = SB[0:N_valor+1, :]       
+    rpsi = rSB[0:N_valor+1, :]
+    rrpsi = rrSB[0:N_valor+1, :]
     inv_psi = np.linalg.inv(psi)
 
-    SB2 = np.zeros([N_valor+1,N_valor+1])
-    rSB2 = np.zeros([N_valor+1,N_valor+1])
-    rrSB2 = np.zeros([N_valor+1,N_valor+1])
+    SB2 = np.zeros([N_valor+1, N_valor+1])
+    rSB2 = np.zeros([N_valor+1, N_valor+1])
+    rrSB2 = np.zeros([N_valor+1, N_valor+1])
 
     for i in range(N_valor+1):
         SB2[i,] = np.sin((2*(i+1/2)+1)*np.arctan(L0_valor/r))
@@ -49,18 +49,18 @@ def configurar_bases_espectrais(L0_valor, N_valor):
     wq_col = gauss_quadrature[1] 
     rq = L0_valor*(1+new_col)/(1-new_col) 
 
-    qSB = np.zeros([Nq+3,Nq+1])
-    qrSB = np.zeros([Nq+3,Nq+1])
-    qrrSB = np.zeros([Nq+3,Nq+1])
+    qSB = np.zeros([Nq+3, Nq+1])
+    qrSB = np.zeros([Nq+3, Nq+1])
+    qrrSB = np.zeros([Nq+3, Nq+1])
 
     for i in range(Nq+1+1+1):
         qSB[i,] = np.sin((2*i+1)*np.arctan(L0_valor/rq))
         qrSB[i,] = -np.cos((2*i+1)*np.arctan(L0_valor/rq))*(2*i+1)*L0_valor/(rq**2*(1+L0_valor**2/rq**2))
         qrrSB[i,] = -np.sin((2*i+1)*np.arctan(L0_valor/rq))*(2*i+1)**2*L0_valor**2/(rq**4*(1+L0_valor**2/rq**2)**2)+2*np.cos((2*i+1)*np.arctan(L0_valor/rq))*(2*i+1)*L0_valor/(rq**3*(1+L0_valor**2/rq**2))-2*np.cos((2*i+1)*np.arctan(L0_valor/rq))*(2*i+1)*L0_valor**3/(rq**5*(1+L0_valor**2/rq**2)**2)
 
-    qpsi = qSB[0:N_valor+1,:]
-    rqpsi = qrSB[0:N_valor+1,:]
-    rrqpsi = qrrSB[0:N_valor+1,:]
+    qpsi = qSB[0:N_valor+1, :]
+    rqpsi = qrSB[0:N_valor+1, :]
+    rrqpsi = qrrSB[0:N_valor+1, :]
 
     qSB2 = np.zeros([N_valor+1, Nq+1])
     rqSB2 = np.zeros([N_valor+1, Nq+1])
@@ -80,6 +80,36 @@ def configurar_bases_espectrais(L0_valor, N_valor):
         'qSB2': qSB2, 'rqSB2': rqSB2, 'psi_0': psi_0,
         'L0': L0_valor, 'N': N_valor
     }
+
+def criar_filtro_espectral(N_valor):
+    """
+    Filtro espectral baseado na função erro complementar.
+    Amortece os coeficientes de alta frequência (modos de Chebyshev).
+    """
+    # Mapeia os modos espectrais: de 1 até N+1
+    eta1 = np.arange(1, N_valor + 2) / (N_valor + 1)
+    n1 = 10.0
+    
+    # O termo central do filtro original: 4 * (eta1 - 0.5)^2
+    arg = 4.0 * (eta1 - 0.5)**2
+    inner_term = np.zeros_like(arg)
+    
+    # Avaliação rigorosa para evitar RuntimeWarning (NaN)
+    for i in range(len(arg)):
+        x = arg[i]
+        if x < 1e-12:
+            # Pela regra de L'Hôpital, o limite de -ln(1-x)/x quando x -> 0 é 1
+            inner_term[i] = 1.0  
+        elif x >= 1.0:
+            # Para valores onde o termo original tenderia a log(0) ou número negativo
+            inner_term[i] = np.inf
+        else:
+            # Cálculo algebraico exato da raiz interior
+            inner_term[i] = -np.log(1.0 - x) / x
+            
+    # Expressão completa do filtro
+    filtro = 0.5 * erfc(2.0 * np.sqrt(n1) * (eta1 - 0.5) * np.sqrt(inner_term))
+    return filtro
 
 # =========================================================================
 # 1. INITIAL CONDITIONS SETUP
@@ -105,13 +135,17 @@ def criar_condicoes_iniciais(A0_valor, bases):
 
     tol = 1e-18
     for n in range(51):
-        Chi = np.dot(c0,psi)
-        rChi = np.dot(c0,rpsi)
-        rrChi = np.dot(c0,rrpsi)
-        H0 = 4*rChi**2 + 4*rrChi + 8/r*rChi + 1/2*(rPhi)**2
-        JH = 8*np.dot(c0,rpsi)*rpsi + 4*rrpsi + 8/r*rpsi
-        cnew = c0 - np.linalg.solve(JH, H0)
-        if min(abs(cnew-c0)) < tol:
+        Chi = np.dot(c0, psi)
+        rChi = np.dot(c0, rpsi)
+        rrChi = np.dot(c0, rrpsi)
+        H0 = 4*rChi**2 + 4*rrChi + 8/r*rChi + 0.5*(rPhi)**2
+        JH = 8*np.dot(c0, rpsi)*rpsi + 4*rrpsi + 8/r*rpsi
+        
+        # [BUG CORRIGIDO]: A equação do N-R matricial precisa transpor o JH (JH.T) 
+        # para mapear corretamente o modo de Chebyshev (colunas originais no Matlab).
+        cnew = c0 - np.linalg.lstsq(JH.T, H0, rcond=None)[0]
+        
+        if min(abs(cnew - c0)) < tol:
             break
         c0 = cnew
 
@@ -141,7 +175,7 @@ def calcular_taxas(c_coefs, a_coefs, b_coefs, theta_coefs, z_coefs, formalismo, 
     rZ = np.dot(z_coefs, rSB2)
 
     # =============== A MÁGICA ADM ===============
-    # Força as variáveis de controlo a zero, matendo a estrutura exata da matriz geométrica
+    # Força as variáveis de controlo a zero se o formalismo for ADM
     if formalismo == 'ADM':
         Theta = np.zeros_like(Theta)
         rTheta = np.zeros_like(rTheta)
@@ -149,40 +183,37 @@ def calcular_taxas(c_coefs, a_coefs, b_coefs, theta_coefs, z_coefs, formalismo, 
         rZ = np.zeros_like(rZ)
     # ============================================
 
-    # 1. Krr (Atenção: Componente Mista K^r_r, expandida com psi!)
-    # MATLAB: McK=6*drchi.*KrrCk+DrKrrCk+3*KrrCk./rcol;
-    McK = 6 * rChi[:, np.newaxis] * psi + rpsi + 3 * (1/r)[:, np.newaxis] * psi
+    # 1. Krr (Componente Mista K^r_r, usa base normal psi)
+    McK = 6 * rChi * psi + rpsi + 3 * (1/r) * psi
     RHS_K = -Pi * rPhi
-    ck0 = np.linalg.solve(McK, RHS_K)
+    ck0 = np.linalg.lstsq(McK.T, RHS_K, rcond=None)[0]
     Krr = np.dot(ck0, psi)
     rKrr = np.dot(ck0, rpsi)
 
     # 2. Lapse (Alpha)
-    # MATLAB: Mal=DrralphaAl+2*(1./rcol+drchi).*DralphaAl-1.5*exp(4*chi).*Krr.^2.*AlphaAl-exp(4*chi).*PI.^2.*AlphaAl...
-    #         -2*drZ.*AlphaAl-2*(2*drchi+2./rcol).*Z.*AlphaAl+3*k1*(1+k2)*Theta.*AlphaAl;
-    Mal = (rrpsi + 2 * (1/r + rChi)[:, np.newaxis] * rpsi 
-           - 1.5 * np.exp(4*Chi)[:, np.newaxis] * (Krr**2)[:, np.newaxis] * psi 
-           - np.exp(4*Chi)[:, np.newaxis] * (Pi**2)[:, np.newaxis] * psi 
-           - 2 * rZ[:, np.newaxis] * psi 
-           - 2 * (2*rChi + 2/r)[:, np.newaxis] * Z[:, np.newaxis] * psi 
-           + 3 * kappa1 * (1 + kappa2) * Theta[:, np.newaxis] * psi)
-           
-    rhsal = (1.5 * np.exp(4*Chi) * Krr**2 + np.exp(4*Chi) * Pi**2 
-             + 2 * rZ + 2 * (2*rChi + 2/r) * Z - 3 * kappa1 * (1 + kappa2) * Theta)
+    Mal = rrpsi + 2 * (1/r + rChi) * rpsi \
+          - 1.5 * np.exp(4*Chi) * (Krr**2) * psi \
+          - np.exp(4*Chi) * (Pi**2) * psi \
+          - 2 * rZ * psi \
+          - 2 * (2*rChi + 2/r) * Z * psi \
+          + 3 * kappa1 * (1 + kappa2) * Theta * psi
+          
+    rhsal = 1.5 * np.exp(4*Chi) * Krr**2 + np.exp(4*Chi) * Pi**2 \
+            + 2 * rZ + 2 * (2*rChi + 2/r) * Z - 3 * kappa1 * (1 + kappa2) * Theta
              
-    al0 = np.linalg.solve(Mal, rhsal)
+    al0 = np.linalg.lstsq(Mal.T, rhsal, rcond=None)[0]
     Alpha = 1 + np.dot(al0, psi)
     rAlpha = np.dot(al0, rpsi)
     Alpha_central = 1 + np.dot(al0, psi_0)
 
     # 3. Shift (Beta)
-    Mbe = rSB2 - SB2 * (1/r)[:, np.newaxis]
+    Mbe = rSB2 - SB2 * (1/r)
     rhsbe = 1.5 * Alpha * Krr
-    be0 = np.linalg.solve(Mbe, rhsbe)
+    be0 = np.linalg.lstsq(Mbe.T, rhsbe, rcond=None)[0]
     Beta = np.dot(be0, SB2)
     rBeta = np.dot(be0, rSB2)
     
-    # 4. Evolution Rates
+    # 4. Taxas de Evolução ADM
     dChi_dt = np.dot(Beta * rChi + Beta / (2*r) + 0.25 * Alpha * Krr, inv_psi)
     dPhi_dt = np.dot(Alpha * Pi + Beta * rPhi, inv_psi)
     
@@ -191,27 +222,29 @@ def calcular_taxas(c_coefs, a_coefs, b_coefs, theta_coefs, z_coefs, formalismo, 
     
     R = -8 * np.exp(-4*Chi) * (rrChi + rChi**2 + 2*rChi/r)
 
-    # 5. Z4 Evolution
-    dTheta_dt_expr = (Beta*rTheta + 0.5*Alpha*(R - 1.5*Krr**2 - Pi**2 - np.exp(-4*Chi)*rPhi**2)
-                      - np.exp(-4*Chi)*Z*rAlpha + Alpha*(rZ + (6*rChi + 2/r)*Z)*np.exp(-4*Chi) 
-                      - kappa1*(kappa2 + 2)*Alpha*Theta)
+    # 5. Evolução Z4
+    # [BUG CORRIGIDO]: drZ trocado por rZ
+    dTheta_dt_expr = Beta * rTheta + 0.5 * Alpha * (R - 1.5*Krr**2 - Pi**2 - np.exp(-4*Chi)*rPhi**2) \
+                     - np.exp(-4*Chi) * Z * rAlpha + Alpha * (rZ + (6*rChi + 2/r)*Z) * np.exp(-4*Chi) \
+                     - kappa1 * (kappa2 + 2) * Alpha * Theta
+                     
     dtheta_dt = np.dot(dTheta_dt_expr, inv_psi)
 
     Mc = rKrr + 6*Krr*rChi + 3*Krr/r + Pi*rPhi
     
-    # IMPORTANTE: + Z*rBeta em vez de - Z*rBeta na versão covariante
-    dZ_dt_expr = (Beta*rZ + Z*rBeta + Alpha*Mc - 2*Alpha*Z*Krr 
-                  + Alpha*rTheta - Theta*rAlpha - kappa1*Alpha*Z)
+    dZ_dt_expr = Beta * rZ + Z * rBeta + Alpha * Mc - 2 * Alpha * Z * Krr \
+                 + Alpha * rTheta - Theta * rAlpha - kappa1 * Alpha * Z
+                 
     dz_dt = np.dot(dZ_dt_expr, inv_SB2)
 
+    # Se for ADM, as variáveis Z4 não evoluem e mantêm-se a 0
     if formalismo == 'ADM':
-        # Garante evolução nula em ADM
         dtheta_dt = np.zeros_like(theta_coefs)
         dz_dt = np.zeros_like(z_coefs)
         
     return dChi_dt, dPhi_dt, dPi_dt, dtheta_dt, dz_dt, Alpha_central, ck0
 
-def passo_rk4(c0, a0, b0, theta0, z0, h, formalismo, kappa1, kappa2, bases, filter1):
+def passo_rk4(c0, a0, b0, theta0, z0, h, formalismo, kappa1, kappa2, filter1, bases):
     K1_rc, K1_ra, K1_rb, K1_rtheta, K1_rz, _, _ = calcular_taxas(c0, a0, b0, theta0, z0, formalismo, kappa1, kappa2, bases)
     K1 = h * K1_rc; L1 = h * K1_ra; N1 = h * K1_rb; dtheta1 = h * K1_rtheta; dz1 = h * K1_rz
 
@@ -239,7 +272,9 @@ def executar_simulacao(formalismo, A0_valor, h, tf, kappa1, kappa2, L0, N):
     qpsi = bases['qpsi']; rqpsi = bases['rqpsi']; rrqpsi = bases['rrqpsi']
     wq_col = bases['wq_col']; rq = bases['rq']
 
-    filter1 = np.ones(N+1)
+    # Filtro desativado para testar pureza
+    filter1 = criar_filtro_espectral(N)
+    #filter1 = np.ones(N+1)
     
     Time_data, Alpha_data, L2HC_data, L2MC_data = [], [], [], []
     t_atual = 0.0
@@ -251,7 +286,7 @@ def executar_simulacao(formalismo, A0_valor, h, tf, kappa1, kappa2, L0, N):
         Time_data.append(t_atual) 
         Alpha_data.append(Alpha_central) 
         
-        # Avaliação com as Matrizes do Z4 (Misto/Covariante)
+        # Avaliação das restrições com a Quadratura
         qPhi = np.dot(a_atual, qpsi)
         rqPhi = np.dot(a_atual, rqpsi)
         qPi = np.dot(b_atual, qpsi)
@@ -259,7 +294,6 @@ def executar_simulacao(formalismo, A0_valor, h, tf, kappa1, kappa2, L0, N):
         rqChi = np.dot(c_atual, rqpsi)
         rrqChi = np.dot(c_atual, rrqpsi)
         
-        # IMPORTANTE: Krr avaliado na base normal (qpsi), como no MATLAB!
         Krrq = np.dot(ck0, qpsi)
         rqKrr = np.dot(ck0, rqpsi)
 
@@ -271,7 +305,7 @@ def executar_simulacao(formalismo, A0_valor, h, tf, kappa1, kappa2, L0, N):
         L2MC_data.append(np.sqrt(0.5 * np.dot(MCq**2, wq_col)))
 
         c_atual, a_atual, b_atual, theta_atual, z_atual = passo_rk4(
-            c_atual, a_atual, b_atual, theta_atual, z_atual, h, formalismo, kappa1, kappa2, bases, filter1
+            c_atual, a_atual, b_atual, theta_atual, z_atual, h, formalismo, kappa1, kappa2, filter1, bases
         )
         
         t_atual += h
@@ -282,14 +316,14 @@ def executar_simulacao(formalismo, A0_valor, h, tf, kappa1, kappa2, L0, N):
     return np.array(Time_data), np.array(Alpha_data), np.array(L2HC_data), np.array(L2MC_data)
 
 # =========================================================================
-# 3. EXECUÇÃO DA COMPARAÇÃO (N=200, L0=5 como solicitado)
+# 3. EXECUÇÃO DA COMPARAÇÃO
 # =========================================================================
-A0_DISPERSAO = 0.05
-N_TESTE = 200
+A0_DISPERSAO = 0.0807
+N_TESTE = 250
 L0_TESTE = 5.0
-KAPPA1_Z4 = 2.0
+KAPPA1_Z4 = 0.0
 KAPPA2_Z4 = 0.0
-TEMPO_FINAL = 12.0
+TEMPO_FINAL = 8.0
 PASSO_H = 0.0002
 
 t_adm, alpha_adm, hc_adm, mc_adm = executar_simulacao('ADM', A0_DISPERSAO, PASSO_H, TEMPO_FINAL, 0.0, 0.0, L0_TESTE, N_TESTE)
